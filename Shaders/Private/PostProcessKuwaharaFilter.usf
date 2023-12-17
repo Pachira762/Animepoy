@@ -1,0 +1,283 @@
+/*=============================================================================
+	PostProcessLine.usf: PostProcessing Line
+=============================================================================*/
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/ScreenPass.ush"
+#include "/Engine/Private/DeferredShadingCommon.ush"
+#include "/Engine/Private/PostProcessCommon.ush"
+#include "/Engine/Private/ColorSpace.ush"
+
+#define VALUE_TYPE_COLOR 0
+#define VALUE_TYPE_NORMAL 1
+#define VALUE_TYPE_MATERIAL 2
+
+SCREEN_PASS_TEXTURE_VIEWPORT(Input)
+
+int FilterSize;
+
+//
+// Common
+//
+
+float Luminance2(float3 Color)
+{
+    return Pow2(Luminance(Color));
+}
+
+float Orientation2(float3 Normal)
+{
+    return Pow2(0.5 * dot(Normal, View.ViewForward) + 0.5);
+}
+
+float MaterialValue2(float3 Material)
+{
+    return Pow2(Material.r + Material.g + Material.b);
+}
+
+//
+// Summed Area Table
+//
+
+groupshared float4 SummedAreaTable[16][16];
+
+float4 CreateSummedAreaTable(float4 Value, int2 ThreadId)
+{
+    const uint4 Mask = WaveMatch(ThreadId.y);
+
+    Value += WaveMultiPrefixSum(Value, Mask); // Sum horizontally
+    SummedAreaTable[ThreadId.y][ThreadId.x] = Value;
+        
+    GroupMemoryBarrierWithGroupSync();
+        
+    Value = SummedAreaTable[ThreadId.x][ThreadId.y]; // Load column major
+    Value += WaveMultiPrefixSum(Value, Mask); // Sum vertically
+
+    return Value;
+}
+
+Texture2D SummedAreaTableTexture;
+
+groupshared float4 CachedSummedAreaTable[32][32];
+
+void LoadSummedAreaTable(int2 PixelOffset, int2 ThreadId)
+{
+    UNROLL
+    for (int y = 0; y < 2; ++y)
+    {
+        UNROLL
+        for (int x = 0; x < 2; ++x)
+        {
+            int2 CachePos = 16 * int2(x, y) + ThreadId;
+            CachedSummedAreaTable[CachePos.y][CachePos.x] = SummedAreaTableTexture[CachePos + PixelOffset];
+        }
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+}
+
+#if USE_CACHE
+#define SUMMED_AREA_TABLE(P) CachedSummedAreaTable[P.y][P.x]
+#else
+#define SUMMED_AREA_TABLE(P) SummedAreaTableTexture[P]
+#endif
+
+float4 CalcAverageAndVariance(int4 Region, int2 Border)
+{
+    Border.x = Region.z < Border.x + 16 ? Border.x : Border.x + 16;
+    Border.y = Region.w < Border.y + 16 ? Border.y : Border.y + 16;
+
+    float4 Value = (float4) 0;
+
+    int2 P0 = Region.xy - 1;
+    int2 P1 = Region.zw;
+    Value += SUMMED_AREA_TABLE(P1);
+    
+    bool bOnBorderX = Region.x == Border.x;
+    if (!bOnBorderX)
+    {
+        int2 Py = int2(P0.x, P1.y);
+        Value -= SUMMED_AREA_TABLE(Py);
+    }
+    
+    bool bOnBorderY = Region.y == Border.y;
+    if (!bOnBorderY)
+    {
+        int2 Px = int2(P1.x, P0.y);
+        Value -= SUMMED_AREA_TABLE(Px);
+    }
+    
+    if (!bOnBorderX && !bOnBorderY)
+    {
+        Value += SUMMED_AREA_TABLE(P0);
+    }
+    
+    bool bUnderBorderX = Region.x < Border.x;
+    if (bUnderBorderX)
+    {
+        int2 Pv = int2(Border.x - 1, P1.y);
+        Value += SUMMED_AREA_TABLE(Pv);
+        
+        if (!bOnBorderY)
+        {
+            int2 Ps = int2(Border.x - 1, P0.y);
+            Value -= SUMMED_AREA_TABLE(Ps);
+        }
+    }
+    
+    bool bUnderBorderY = Region.y < Border.y;
+    if (bUnderBorderY)
+    {
+        int2 Pu = int2(P1.x, Border.y - 1);
+        Value += SUMMED_AREA_TABLE(Pu);
+
+        if (!bOnBorderX)
+        {
+            int2 Pt = int2(P0.x, Border.y - 1);
+            Value -= SUMMED_AREA_TABLE(Pt);
+        }
+    }
+    
+    if (bUnderBorderX && bUnderBorderY)
+    {
+        int2 Pc = Border - int2(1, 1);
+        Value += SUMMED_AREA_TABLE(Pc);
+    }
+
+    Value /= (Region.z - Region.x + 1) * (Region.w - Region.y + 1);
+
+#if VALUE_TYPE == VALUE_TYPE_COLOR
+    Value.a -= Luminance2(Value.rgb);
+#elif VALUE_TYPE == VALUE_TYPE_NORMAL
+    Value.a -= Orientation2(Value.xyz);
+    Value.xyz = normalize(Value.xyz);
+#elif VALUE_TYPE == VALUE_TYPE_MATERIAL
+    Value.a -= MaterialValue2(Value.rgb);
+#endif
+
+    return Value;
+}
+
+//
+//
+//
+
+float rand2(float2 n) { return frac(sin(dot(0.0000001f * n, float2(12.9898, 4.1414))) * 43758.5453); }
+
+Texture2D InputTexture;
+RWTexture2D<float4> OutSummedAreaTableTexture;
+
+[numthreads(16, 16, 1)]
+void KuwaharaFilterSetupCS(int2 Id : SV_DispatchThreadID, int2 ThreadId : SV_GroupThreadID)
+{
+    int2 SrcPos = Input_ViewportMin + Id;
+    float4 Value = InputTexture[SrcPos];
+
+#if VALUE_TYPE == VALUE_TYPE_COLOR
+    Value.a = Luminance2(Value.rgb);
+#elif VALUE_TYPE == VALUE_TYPE_NORMAL
+    Value.xyz = DecodeNormal(Value.xyz);
+    Value.a = Orientation2(Value.xyz);
+#elif VALUE_TYPE == VALUE_TYPE_MATERIAL
+    Value.a = MaterialValue2(Value.rgb);
+#endif
+
+    float4 SummedValue = CreateSummedAreaTable(Value, ThreadId);
+    
+    int2 DestPos = SrcPos - ThreadId + ThreadId.yx; // Store vertically
+    if (all(DestPos < Input_ViewportMax))
+    {
+        OutSummedAreaTableTexture[DestPos] = SummedValue;
+    }
+}
+
+float4 KuwaharaFilter(int2 PixelPos, int2 PixelOffset, int2 ThreadId)
+{
+#if USE_CACHE
+    int2 Borders[4] = {
+        int2(-8, -8),
+        int2(8, -8),
+        int2(-8, 8),
+        int2(8, 8),
+    };
+#else
+    int2 Borders[4] =
+    {
+        PixelPos - ThreadId,
+        PixelPos - ThreadId,
+        PixelPos - ThreadId,
+        PixelPos - ThreadId,
+    };
+#endif
+
+#if USE_CACHE
+    LoadSummedAreaTable(PixelOffset, ThreadId);
+#endif
+
+    int Cx = PixelPos.x - PixelOffset.x;
+    int Cy = PixelPos.y - PixelOffset.y;
+    int Left = max(PixelPos.x - FilterSize, 0) - PixelOffset.x;
+    int Top = max(PixelPos.y - FilterSize, 0) - PixelOffset.y;
+    int Right = min(PixelPos.x + FilterSize, Input_ViewportMax.x - 1) - PixelOffset.x;
+    int Bottom = min(PixelPos.y + FilterSize, Input_ViewportMax.y - 1) - PixelOffset.y;
+    
+    int4 Regions[4] =
+    {
+        int4(Left, Top, Cx, Cy),
+        int4(Cx, Top, Right, Cy),
+        int4(Left, Cy, Cx, Bottom),
+        int4(Cx, Cy, Right, Bottom)
+    };
+
+    float4 ValueAndMinVariance = CalcAverageAndVariance(Regions[0], Borders[0]);
+
+    UNROLL
+    for (int i = 1; i < 4; ++i)
+    {
+        float4 ValueAndVariance = CalcAverageAndVariance(Regions[i], Borders[i]);
+        if (ValueAndVariance.a < ValueAndMinVariance.a)
+        {
+            ValueAndMinVariance = ValueAndVariance;
+        }
+    }
+    
+    return ValueAndMinVariance;
+}
+
+RWTexture2D<float4> OutTexture;
+
+[numthreads(16, 16, 1)]
+void KuwaharaFilterCS(int2 Id : SV_DispatchThreadID, int2 ThreadId : SV_GroupThreadID)
+{
+    int2 PixelPos = Input_ViewportMin + Id;
+    int2 PixelOffset = PixelPos - ThreadId - 8;
+    
+    float4 ValueAndVariance = KuwaharaFilter(PixelPos, PixelOffset, ThreadId);
+    
+    if (all(PixelPos < Input_ViewportMax))
+    {
+#if VALUE_TYPE == VALUE_TYPE_COLOR
+        OutTexture[PixelPos].rgb = ValueAndVariance.rgb;
+#elif VALUE_TYPE == VALUE_TYPE_NORMAL
+        OutTexture[PixelPos].xyz = EncodeNormal(ValueAndVariance.xyz);
+#elif VALUE_TYPE == VALUE_TYPE_MATERIAL
+        OutTexture[PixelPos].rgb = ValueAndVariance.rgb;
+#endif
+    }
+}
+
+void KuwaharaFilterPS(float4 SvPosition : SV_POSITION, out float3 OutValue : SV_Target0)
+{
+    int2 PixelPos = int2(SvPosition.xy);
+    int2 ThreadId = (PixelPos - Input_ViewportMin) & 0x0F;
+
+    float4 ValueAndVariance = KuwaharaFilter(PixelPos, 0, ThreadId);
+
+#if VALUE_TYPE == VALUE_TYPE_COLOR
+    OutValue = ValueAndVariance.rgb;
+#elif VALUE_TYPE == VALUE_TYPE_NORMAL
+    OutValue = EncodeNormal(ValueAndVariance.xyz);
+#elif VALUE_TYPE == VALUE_TYPE_MATERIAL
+    OutValue = ValueAndVariance.rgb;
+#endif
+}

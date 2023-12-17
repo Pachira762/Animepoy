@@ -1,0 +1,244 @@
+/*=============================================================================
+	PostProcessLineArt.usf: PostProcessing Line
+=============================================================================*/
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/PositionReconstructionCommon.ush"
+#include "/Engine/Private/ScreenPass.ush"
+#include "/Engine/Private/DeferredShadingCommon.ush"
+#include "/Engine/Private/PostProcessCommon.ush"
+
+SCREEN_PASS_TEXTURE_VIEWPORT(Input)
+
+Texture2D<uint> LineTexture;
+
+float4 LineColor;
+float MaterialThreshold;
+float DepthThreshold;
+float NormalThreshold;
+float PlanarThreshold;
+float NonLineSpecular;
+int LineWidth;
+int SearchRangeMin;
+int SearchRangeMax;
+
+float Min4(float A, float B, float C, float D)
+{
+    return min(min(A, B), min(C, D));
+}
+
+float3 GetWorldPosition(int2 PixelPos, float DeviceZ)
+{
+    float2 ScreenUV = ((float2) PixelPos + 0.5) * View.BufferSizeAndInvSize.zw;
+    float2 ScreenPosition = (ScreenUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+    float SceneDepth = ConvertFromDeviceZ(DeviceZ);
+    return mul(float4(GetScreenPositionForProjectionType(ScreenPosition, SceneDepth), SceneDepth, 1), LWCHackToFloat(PrimaryView.ScreenToWorld)).xyz;
+}
+
+uint EncodeLine(float DeviceZ)
+{
+    return asuint(DeviceZ);
+}
+
+float DecodeLine(in uint Line)
+{
+    return asfloat(Line);
+}
+
+uint CalcLineDistance2(int2 Offset)
+{
+    int X = Offset.x < 0 ? 2 * Offset.x + 1 : 2 * Offset.x;
+    int Y = Offset.y < 0 ? 2 * Offset.y + 1 : 2 * Offset.y;
+    return X * X + Y * Y;
+}
+
+struct PixelData
+{
+    half Metallic;
+    half Specular;
+    half Roughness;
+    half ShadingModel; // v0
+    half3 WorldNormal;
+    half Fresnel; // v1
+    float3 WorldPosition;
+    float DeviceZ; // v2
+    bool bNoLine;
+};
+
+PixelData GetPixelData(int2 PixelPos)
+{
+    PixelData OutPixel = (PixelData) 0;
+
+    uint ShadingModelID = 0;
+    {
+        float4 GBufferB = GBufferBTexture[PixelPos];
+        ShadingModelID = DecodeShadingModelId(GBufferB.a);
+
+        OutPixel.Metallic = GBufferB.r;
+        OutPixel.Specular = GBufferB.g;
+        OutPixel.Roughness = GBufferB.b;
+        OutPixel.ShadingModel = GBufferB.a;
+
+        OutPixel.bNoLine = OutPixel.Specular == NonLineSpecular;
+    }
+
+    {
+        OutPixel.DeviceZ = SceneDepthTexture[PixelPos].r;
+        OutPixel.WorldPosition = GetWorldPosition(PixelPos, OutPixel.DeviceZ);
+    }
+
+    {
+        bool bHasNormal = ShadingModelID != SHADINGMODELID_UNLIT;
+        OutPixel.WorldNormal = bHasNormal ? DecodeNormal(GBufferATexture[PixelPos].xyz) : half3(0, 0, 0);
+        OutPixel.Fresnel = 0.f;
+
+        if (bHasNormal)
+        {
+            float3 CameraPosition = View.RelativeWorldCameraOrigin;
+            float3 V = normalize(OutPixel.WorldPosition - CameraPosition);
+            float3 N = OutPixel.WorldNormal;
+            float Fresnel = 1 - abs(dot(N, V));
+            OutPixel.Fresnel = Fresnel;
+        }
+    }
+
+    return OutPixel;
+}
+
+bool DetectLine(PixelData Pixel0, PixelData Pixel1, out bool bShiftLine)
+{
+    bool bNear = Pixel0.DeviceZ > Pixel1.DeviceZ;
+
+    bShiftLine = !bNear;
+
+    // Cancel line if near object has no line flag.
+    bool bNoLine = bNear ? Pixel0.bNoLine : Pixel1.bNoLine;
+    if (bNoLine)
+    {
+        return false;
+    }
+
+    if (Pixel0.ShadingModel != Pixel1.ShadingModel)
+    {
+        return true;
+    }
+
+    // Depth Line
+    float DepthFactor = lerp(1, 0.1f, bNear ? Pixel0.Fresnel : Pixel1.Fresnel);
+    float DeltaZ = abs(Pixel0.DeviceZ - Pixel1.DeviceZ);
+    if (DepthFactor * DeltaZ > DepthThreshold)
+    {
+        return true;
+    }
+    
+    // Planar Line
+    float3 V = normalize(Pixel0.WorldPosition - Pixel1.WorldPosition);
+    float NoV = max(abs(dot(Pixel0.WorldNormal, V)), abs(dot(Pixel1.WorldNormal, V)));
+    if (NoV > PlanarThreshold)
+    {
+        return true;
+    }
+
+    // MaterialLine
+    float DeltaMetallic = abs(Pixel0.Metallic - Pixel1.Metallic);
+    float DeltaSpecular = abs(Pixel0.Specular - Pixel1.Specular);
+    float DeltaRoughness = abs(Pixel0.Roughness - Pixel1.Roughness);
+    if (DeltaMetallic + DeltaSpecular + DeltaRoughness > MaterialThreshold)
+    {
+        return true;
+    }
+
+    // Normal Line
+    float DeltaNormal = dot(Pixel0.WorldNormal, Pixel1.WorldNormal);
+    if (DeltaNormal < NormalThreshold)
+    {
+        bShiftLine = false;
+        return true;
+    }
+
+    return false;
+}
+
+RWTexture2D<uint> OutLineTexture;
+
+[numthreads(8, 8, 1)]
+void DetectLineCS(int2 Id : SV_DispatchThreadID)
+{
+    static const int2 Offsets[2] =
+    {
+        int2(1, 0),
+        int2(0, 1),
+    };
+
+    int2 PixelPos0 = Input_ViewportMin + Id;
+    if (all(PixelPos0 < Input_ViewportMax))
+    {
+        PixelData Pixel0 = GetPixelData(PixelPos0);
+
+        for (int i = 0; i < 2; ++i)
+        {
+            int2 PixelPos1 = PixelPos0 + Offsets[i];
+            if (all(PixelPos1 < Input_ViewportMax))
+            {
+                PixelData Pixel1 = GetPixelData(PixelPos1);
+
+                bool bShiftLine = false;
+                if (DetectLine(Pixel0, Pixel1, bShiftLine))
+                {
+                    int2 LinePos = bShiftLine ? PixelPos1 : PixelPos0;
+                    float DeviceZ = bShiftLine ? Pixel1.DeviceZ : Pixel0.DeviceZ;
+                    InterlockedMax(OutLineTexture[LinePos], EncodeLine(DeviceZ));
+                }
+            }
+        }
+    }
+}
+
+bool FindLine(int2 PixelPos, out float LineDepth)
+{
+    static int2 SearchOffsets[5] = { int2(0, 0), int2(0, -1), int2(-1, 0), int2(+1, 0), int2(0, +1) };
+    
+    LineDepth = 0.f;
+
+    for (int y = SearchRangeMin; y <= SearchRangeMax; ++y)
+    {
+        for (int x = SearchRangeMin; x <= SearchRangeMax; ++x)
+        {
+            int2 Offset = int2(x, y);
+            int2 LinePos = PixelPos + Offset;
+
+            if (all(Input_ViewportMin <= LinePos) && all(LinePos < Input_ViewportMax))
+            {
+                float Depth = DecodeLine(LineTexture[LinePos]);
+                uint Distance = CalcLineDistance2(Offset);
+
+                if (Depth > LineDepth && Distance < LineWidth)
+                {
+                    LineDepth = Depth;
+                }
+            }
+        }
+    }
+
+    return LineDepth != 0.f;
+}
+
+void CompositeLinePS(float4 SvPosition : SV_POSITION, out float4 OutColor : SV_Target0, out float OutDepth : SV_Depth)
+{
+    int2 PixelPos = int2(SvPosition.xy);
+    float Depth;
+    if (!FindLine(PixelPos, Depth))
+    {
+        discard;
+        return;
+    }
+
+    OutColor = float4(LineColor.a * LineColor.rgb, LineColor.a);
+    OutDepth = Depth;
+}
+
+void ClearSceneColorAndGBufferPS(float4 SvPosition : SV_POSITION, out float4 OutSceneColor : SV_Target0, out float4 OutGBufferB : SV_Target1)
+{
+    OutSceneColor = float4(1, 1, 1, 0);
+    OutGBufferB = (float4) 0; // UNLIT
+}
