@@ -4,29 +4,17 @@
 #include "ScreenPass.h"
 #include "SceneTexturesConfig.h"
 
-struct FDetectLinePassInputs
+struct FLineArtPassInputs
 {
-	FRDGTextureRef GBufferA;
-	FRDGTextureRef GBufferB;
-	FRDGTextureRef SceneDepth;
+	TRDGUniformBufferRef<FSceneTextureUniformParameters> SceneTextures;
 	float DepthLineIntensity;
 	float NormalLineIntensity;
 	float MaterialLineIntensity;
 	float PlanarLineIntensity;
 	float NonLineSpecular;
-};
-
-struct FCompositeLinePassInputs
-{
-	FRDGTextureRef Target;
-	FRDGTextureRef SceneDepth;
-	FRDGTextureRef GBufferB;
-	FRDGTextureRef LineTexture;
-	FLinearColor LineColor;
 	int32 LineWidth;
+	FLinearColor LineColor;
 	bool bPreview;
 };
 
-FRDGTextureRef AddDetectLinePass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FDetectLinePassInputs& Inputs);
-
-void AddCompositeLinePass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FCompositeLinePassInputs& Inputs);
+void AddLineArtPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FLineArtPassInputs& Inputs);

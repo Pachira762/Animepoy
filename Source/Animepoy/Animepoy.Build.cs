@@ -54,5 +54,7 @@ public class Animepoy : ModuleRules
 				// ... add any modules that your module loads dynamically here ...
 			}
             );
+
+        AppendStringToPublicDefinition("CUSTOM_SCENE_VIEW_EXTENSION", "1");
     }
 }

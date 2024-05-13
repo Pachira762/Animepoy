@@ -3,10 +3,13 @@
 =============================================================================*/
 
 #include "/Engine/Private/Common.ush"
-#include "/Engine/Private/PositionReconstructionCommon.ush"
-#include "/Engine/Private/ScreenPass.ush"
+#include "/Engine/Private/Substrate/Substrate.ush"
+#include "/Engine/Private/Substrate/SubstrateEvaluation.ush"
 #include "/Engine/Private/DeferredShadingCommon.ush"
 #include "/Engine/Private/PostProcessCommon.ush"
+#include "/Engine/Private/ScreenPass.ush"
+#include "/Engine/Private/SceneTextureParameters.ush"
+#include "/Engine/Private/PositionReconstructionCommon.ush"
 
 SCREEN_PASS_TEXTURE_VIEWPORT(Input)
 
@@ -54,21 +57,56 @@ uint CalcLineDistance2(int2 Offset)
 
 struct PixelData
 {
-    half Metallic;
-    half Specular;
-    half Roughness;
-    half ShadingModel; // v0
-    half3 WorldNormal;
-    half Fresnel; // v1
-    float3 WorldPosition;
-    float DeviceZ; // v2
-    bool bNoLine;
+    float   DeviceZ;
+    float3  WorldPosition;
+    float3  WorldNormal;
+    float   Fresnel;
+
+#if SUBSTRATE_ENABLED
+    uint    State;
+    float   Group;
+#else
+    float   Metallic;
+    float   Specular;
+    float   Roughness;
+    uint    ShadingModel;
+#endif // SUBSTRATE_ENABLED
+
+    uint    Flags;
 };
+
+#define NO_LINE_MASK 0x80
+#define NO_LINE_GROUP_MASK 0x40
 
 PixelData GetPixelData(int2 PixelPos)
 {
-    PixelData OutPixel = (PixelData) 0;
+    PixelData OutPixel = (PixelData)0;
 
+    float3 CameraVector;
+    {
+        OutPixel.DeviceZ = LookupDeviceZ(PixelPos);
+        ReconstructTranslatedWorldPositionAndCameraDirectionFromDeviceZ(PixelPos, OutPixel.DeviceZ, OutPixel.WorldPosition, CameraVector);
+    }
+    
+#if SUBSTRATE_ENABLED    
+	FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(PixelPos, uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
+	FSubstratePixelHeader SubstratePixelHeader = UnpackSubstrateHeaderIn(Substrate.MaterialTextureArray, SubstrateAddressing, Substrate.TopLayerTexture);
+    FSubstrateBSDF BSDF = UnpackSubstrateBSDF(Substrate.MaterialTextureArray, SubstrateAddressing, SubstratePixelHeader);
+    
+    OutPixel.WorldNormal = SubstrateGetWorldNormal(SubstratePixelHeader, BSDF, SubstrateAddressing);
+    OutPixel.Fresnel = 1.0 - abs(dot(OutPixel.WorldNormal, CameraVector));
+
+    OutPixel.State = SubstratePixelHeader.State;
+
+    OutPixel.Group = 0.0;
+    OutPixel.Flags = 0;
+    if(BSDF_GETTYPE(BSDF) == SUBSTRATE_BSDF_TYPE_TOON)
+    {
+        float2 ToonParams = TOON_PARAMS(BSDF).xy;
+        OutPixel.Group = ToonParams.y;
+        OutPixel.Flags = uint(255.0 * ToonParams.x);
+    }
+#else
     uint ShadingModelID = 0;
     {
         float4 GBufferB = GBufferBTexture[PixelPos];
@@ -83,24 +121,19 @@ PixelData GetPixelData(int2 PixelPos)
     }
 
     {
-        OutPixel.DeviceZ = SceneDepthTexture[PixelPos].r;
-        OutPixel.WorldPosition = GetWorldPosition(PixelPos, OutPixel.DeviceZ);
-    }
-
-    {
         bool bHasNormal = ShadingModelID != SHADINGMODELID_UNLIT;
         OutPixel.WorldNormal = bHasNormal ? DecodeNormal(GBufferATexture[PixelPos].xyz) : half3(0, 0, 0);
         OutPixel.Fresnel = 0.f;
 
         if (bHasNormal)
         {
-            float3 CameraPosition = View.RelativeWorldCameraOrigin;
-            float3 V = normalize(OutPixel.WorldPosition - CameraPosition);
+            float3 V = -normalize(OutPixel.WorldPosition - PrimaryView.TranslatedWorldCameraOrigin);
             float3 N = OutPixel.WorldNormal;
             float Fresnel = 1 - abs(dot(N, V));
             OutPixel.Fresnel = Fresnel;
         }
     }
+#endif // SUBSTRATE_ENABLED
 
     return OutPixel;
 }
@@ -112,16 +145,33 @@ bool DetectLine(PixelData Pixel0, PixelData Pixel1, out bool bShiftLine)
     bShiftLine = !bNear;
 
     // Cancel line if near object has no line flag.
-    bool bNoLine = bNear ? Pixel0.bNoLine : Pixel1.bNoLine;
-    if (bNoLine)
+    bool bNoLine = (bNear ? Pixel0.Flags : Pixel1.Flags) & NO_LINE_MASK;
+    bool bNoLineWith = (Pixel0.Flags & Pixel1.Flags) & NO_LINE_GROUP_MASK;
+    if (bNoLine || bNoLineWith)
     {
         return false;
-    }
+    } 
 
+#if SUBSTRATE_ENABLED
+    if (Pixel0.State != Pixel1.State || Pixel0.Flags != Pixel1.Flags || Pixel0.Group != Pixel1.Group)
+    {
+        return true;
+    }
+#else
     if (Pixel0.ShadingModel != Pixel1.ShadingModel)
     {
         return true;
     }
+
+    // MaterialLine
+    float DeltaMetallic = abs(Pixel0.Metallic - Pixel1.Metallic);
+    float DeltaSpecular = abs(Pixel0.Specular - Pixel1.Specular);
+    float DeltaRoughness = abs(Pixel0.Roughness - Pixel1.Roughness);
+    if (DeltaMetallic + DeltaSpecular + DeltaRoughness > MaterialThreshold)
+    {
+        return true;
+    }
+#endif // SUBSTRATE_ENABLED
 
     // Depth Line
     float DepthFactor = lerp(1, 0.1f, bNear ? Pixel0.Fresnel : Pixel1.Fresnel);
@@ -135,15 +185,6 @@ bool DetectLine(PixelData Pixel0, PixelData Pixel1, out bool bShiftLine)
     float3 V = normalize(Pixel0.WorldPosition - Pixel1.WorldPosition);
     float NoV = max(abs(dot(Pixel0.WorldNormal, V)), abs(dot(Pixel1.WorldNormal, V)));
     if (NoV > PlanarThreshold)
-    {
-        return true;
-    }
-
-    // MaterialLine
-    float DeltaMetallic = abs(Pixel0.Metallic - Pixel1.Metallic);
-    float DeltaSpecular = abs(Pixel0.Specular - Pixel1.Specular);
-    float DeltaRoughness = abs(Pixel0.Roughness - Pixel1.Roughness);
-    if (DeltaMetallic + DeltaSpecular + DeltaRoughness > MaterialThreshold)
     {
         return true;
     }
@@ -194,7 +235,7 @@ void DetectLineCS(int2 Id : SV_DispatchThreadID)
     }
 }
 
-bool FindLine(int2 PixelPos, out float LineDepth)
+float FindLine(int2 PixelPos, out float LineDepth)
 {
     static int2 SearchOffsets[5] = { int2(0, 0), int2(0, -1), int2(-1, 0), int2(+1, 0), int2(0, +1) };
     
@@ -220,14 +261,14 @@ bool FindLine(int2 PixelPos, out float LineDepth)
         }
     }
 
-    return LineDepth != 0.f;
+    return LineDepth;
 }
 
 void CompositeLinePS(float4 SvPosition : SV_POSITION, out float4 OutColor : SV_Target0, out float OutDepth : SV_Depth)
 {
     int2 PixelPos = int2(SvPosition.xy);
-    float Depth;
-    if (!FindLine(PixelPos, Depth))
+    float Depth = FindLine(PixelPos, Depth);
+    if (Depth == 0.0)
     {
         discard;
         return;
@@ -237,8 +278,7 @@ void CompositeLinePS(float4 SvPosition : SV_POSITION, out float4 OutColor : SV_T
     OutDepth = Depth;
 }
 
-void ClearSceneColorAndGBufferPS(float4 SvPosition : SV_POSITION, out float4 OutSceneColor : SV_Target0, out float4 OutGBufferB : SV_Target1)
+void ClearSceneColorAndGBufferPS(float4 SvPosition : SV_POSITION, out float4 OutSceneColor : SV_Target0)
 {
     OutSceneColor = float4(1, 1, 1, 0);
-    OutGBufferB = (float4) 0; // UNLIT
 }
