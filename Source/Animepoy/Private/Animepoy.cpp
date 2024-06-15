@@ -1,23 +1,74 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+// Fill out your copyright notice in the Description page of Project Settings.
+
 
 #include "Animepoy.h"
-#include "Interfaces/IPluginManager.h"
+#include "AnimepoySubsystem.h"
 
-#define LOCTEXT_NAMESPACE "FAnimepoyModule"
-
-void FAnimepoyModule::StartupModule()
+// Sets default values
+AAnimepoy::AAnimepoy()
 {
-	// This code will execute after your module is loaded into memory; the exact timing is specified in the .uplugin file per-module
-	FString PluginShaderDir = FPaths::Combine(IPluginManager::Get().FindPlugin(TEXT("Animepoy"))->GetBaseDir(), TEXT("Shaders"));
-	AddShaderSourceDirectoryMapping(TEXT("/AnimepoyShaders"), PluginShaderDir);
+	PrimaryActorTick.bCanEverTick = true;
 }
 
-void FAnimepoyModule::ShutdownModule()
+// Called when the game starts or when spawned
+void AAnimepoy::BeginPlay()
 {
-	// This function may be called during shutdown to clean up your module.  For modules that support dynamic reloading,
-	// we call this function before unloading the module.
+	Super::BeginPlay();
+
+	if (const UWorld* World = GetWorld())
+	{
+		if (UAnimepoySubsystem* WorldSubsystem = World->GetSubsystem<UAnimepoySubsystem>())
+		{
+			WorldSubsystem->OnActorSpawned(this);
+		}
+	}
 }
 
-#undef LOCTEXT_NAMESPACE
+void AAnimepoy::BeginDestroy()
+{
+	if (const UWorld* World = GetWorld())
+	{
+		if (UAnimepoySubsystem* WorldSubsystem = World->GetSubsystem<UAnimepoySubsystem>())
+		{
+			WorldSubsystem->OnActorDeleted(this);
+		}
+	}
 
-IMPLEMENT_MODULE(FAnimepoyModule, Animepoy)
+	Super::BeginDestroy();
+}
+
+void AAnimepoy::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	if (const UWorld* World = GetWorld()) 
+	{
+		if (UAnimepoySubsystem* AnimepoySubsystem = World->GetSubsystem<UAnimepoySubsystem>()) 
+		{
+			FAnimepoyRenderProxy TempSettings;
+			TempSettings.bEnable = !this->IsHidden();
+
+			TempSettings.bLineArt = bLineArt && LineWidth > 0 && LineColor.A != 0.f;
+			TempSettings.LineColor = LineColor;
+			TempSettings.LineWidth = LineWidth;
+			TempSettings.DepthLineIntensity = DepthLineIntensity;
+			TempSettings.NormalLineIntensity = NormalLineIntensity;
+			TempSettings.MaterialLineIntensity = MaterialLineIntensity;
+			TempSettings.PlanarLineIntensity = PlanarLineIntensity;
+			TempSettings.bPreviewLine = bPreviewLine;
+
+			TempSettings.bPrePostProcessKuwaharaFilter = bPrePostProcessKuwaharaFilter;
+			TempSettings.PrePostProcessKuwaharaFilterSize = PrePostProcessKuwaharaFilterSize;
+
+			TempSettings.bDiffusionFilter = bDiffusionFilter && DiffusionFilterIntensity != 0.f;
+			TempSettings.DiffusionFilterIntensity = DiffusionFilterIntensity;
+			TempSettings.DiffusionLuminanceMin = DiffusionLuminanceMin;
+			TempSettings.DiffusionLuminanceMax = DiffusionLuminanceMax;
+			TempSettings.DiffusionBlurPercentage = DiffusionBlurPercentage;
+			TempSettings.DiffusionBlendMode = DiffusionBlendMode;
+			TempSettings.bPreviewDiffusionMask = bPreviewDiffusionMask;
+
+			AnimepoySubsystem->SetAnimepoyRenderProxy(TempSettings);
+		}
+	}
+}

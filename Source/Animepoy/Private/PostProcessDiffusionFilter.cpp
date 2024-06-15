@@ -111,7 +111,7 @@ FScreenPassTexture AddPostProcessDiffusionPass(FRDGBuilder& GraphBuilder, const 
 		FGaussianBlurInputs BlurInputs;
 		BlurInputs.NameX = TEXT("DiffusionBlurX");
 		BlurInputs.NameY = TEXT("DiffusionBlurY");
-		BlurInputs.Filter = FScreenPassTexture(MaskTexture);
+		BlurInputs.Filter = FScreenPassTextureSlice::CreateFromScreenPassTexture(GraphBuilder, FScreenPassTexture(MaskTexture));
 		BlurInputs.TintColor = FLinearColor::White;
 		BlurInputs.CrossCenterWeight = FVector2f::ZeroVector;
 		BlurInputs.KernelSizePercent = Inputs.BlurPercentage;

@@ -4,36 +4,32 @@
 
 #include "CoreMinimal.h"
 #include "SceneViewExtension.h"
-#include "AnimepoyWorldSubsystem.h"
+#include "AnimepoySubsystem.h"
+
+#define USE_POST_DEFERRED_LIGHTING_PASS 1
 
 class FAnimepoySceneViewExtension : public FSceneViewExtensionBase
 {
 public:
-	FAnimepoySceneViewExtension(const FAutoRegister& AutoRegister, UAnimepoyWorldSubsystem* WorldSubsystem);
+	FAnimepoySceneViewExtension(const FAutoRegister& AutoRegister, UAnimepoySubsystem* WorldSubsystem);
 
-	virtual void SetupViewFamily(FSceneViewFamily& InViewFamily);
+	virtual void SetupViewFamily(FSceneViewFamily& InViewFamily) override {}
+	virtual void SetupView(FSceneViewFamily& InViewFamily, FSceneView& InView) override;
+	virtual void BeginRenderViewFamily(FSceneViewFamily& InViewFamily) override {}
 
-	virtual void SetupView(FSceneViewFamily& InViewFamily, FSceneView& InView) {}
+#if USE_POST_DEFERRED_LIGHTING_PASS
+	// Called right after deferred lighting, before fog rendering.
+	virtual void PostDeferredLighting_RenderThread(FRDGBuilder& GraphBuilder, FSceneView& InView, TRDGUniformBufferRef<FSceneTextureUniformParameters> SceneTextures) override;
 
-	virtual void BeginRenderViewFamily(FSceneViewFamily& InViewFamily) {}
-
-	virtual void PostRenderBasePassDeferred_RenderThread(FRDGBuilder& GraphBuilder, FSceneView& InView, const FRenderTargetBindingSlots& RenderTargets, TRDGUniformBufferRef<FSceneTextureUniformParameters> SceneTextures) override;
+#endif // USE_POST_DEFERRED_LIGHTING_PASS
 
 	virtual void PrePostProcessPass_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& InView, const FPostProcessingInputs& Inputs) override;
-
 	virtual void SubscribeToPostProcessingPass(EPostProcessingPass Pass, FAfterPassCallbackDelegateArray& InOutPassCallbacks, bool bIsPassEnabled) override;
 
 private:
-	virtual bool IsActiveThisFrame_Internal(const FSceneViewExtensionContext& Context) const override;
+	UAnimepoySubsystem* WorldSubsystem{};
+	FAnimepoyRenderProxy AnimepoyRenderProxy;
+	bool bEnable;
 
-private:
-	UAnimepoyWorldSubsystem* WorldSubsystem{};
-
-	FAnimepoySettingsRenderProxy Settings{};
-
-	FRDGTextureRef LineTexture{};
-
-	FScreenPassTexture DiffusionFilterPass(FRDGBuilder& GraphBuilder, const FSceneView& InView, const FPostProcessMaterialInputs& Inputs);
-
-	bool ShouldProcessThisView(const FSceneView& View);
+	bool ShouldProcessThisView() const;
 };

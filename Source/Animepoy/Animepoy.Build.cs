@@ -54,5 +54,7 @@ public class Animepoy : ModuleRules
 				// ... add any modules that your module loads dynamically here ...
 			}
             );
+
+        PrivateDefinitions.Add("USE_POST_DEFERRED_LIGHTING_PASS=1");
     }
 }
