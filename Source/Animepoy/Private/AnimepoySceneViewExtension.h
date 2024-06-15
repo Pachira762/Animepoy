@@ -6,8 +6,6 @@
 #include "SceneViewExtension.h"
 #include "AnimepoySubsystem.h"
 
-#define USE_POST_DEFERRED_LIGHTING_PASS 1
-
 class FAnimepoySceneViewExtension : public FSceneViewExtensionBase
 {
 public:
@@ -20,7 +18,6 @@ public:
 #if USE_POST_DEFERRED_LIGHTING_PASS
 	// Called right after deferred lighting, before fog rendering.
 	virtual void PostDeferredLighting_RenderThread(FRDGBuilder& GraphBuilder, FSceneView& InView, TRDGUniformBufferRef<FSceneTextureUniformParameters> SceneTextures) override;
-
 #endif // USE_POST_DEFERRED_LIGHTING_PASS
 
 	virtual void PrePostProcessPass_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& InView, const FPostProcessingInputs& Inputs) override;

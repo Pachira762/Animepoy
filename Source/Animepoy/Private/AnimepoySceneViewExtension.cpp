@@ -65,6 +65,23 @@ void FAnimepoySceneViewExtension::PrePostProcessPass_RenderThread(FRDGBuilder& G
 
 		AddKuwaharaFilterPass(GraphBuilder, View, PassInputs);
 	}
+
+#if !USE_POST_DEFERRED_LIGHTING_PASS
+	if (ShouldProcessThisView() && AnimepoyRenderProxy.bLineArt)
+	{
+		FLineArtPassInputs PassInputs;
+		PassInputs.SceneTextures = Inputs.SceneTextures;
+		PassInputs.DepthLineIntensity = AnimepoyRenderProxy.DepthLineIntensity;
+		PassInputs.NormalLineIntensity = AnimepoyRenderProxy.NormalLineIntensity;
+		PassInputs.PlanarLineIntensity = AnimepoyRenderProxy.PlanarLineIntensity;
+		PassInputs.MaterialLineIntensity = AnimepoyRenderProxy.MaterialLineIntensity;
+		PassInputs.LineWidth = AnimepoyRenderProxy.LineWidth;
+		PassInputs.LineColor = AnimepoyRenderProxy.LineColor;
+		PassInputs.bPreview = AnimepoyRenderProxy.bPreviewLine;
+
+		AddLineArtPass(GraphBuilder, View, PassInputs);
+	}
+#endif // !USE_POST_DEFERRED_LIGHTING_PASS
 }
 
 void FAnimepoySceneViewExtension::SubscribeToPostProcessingPass(EPostProcessingPass Pass, FAfterPassCallbackDelegateArray& InOutPassCallbacks, bool bIsPassEnabled)
