@@ -6,41 +6,30 @@
 #include "SceneViewExtension.h"
 #include "AnimepoySubsystem.h"
 
-#define CUSTOM_SCENE_VIEW_EXTENSION 1
+#define USE_POST_DEFERRED_LIGHTING_PASS 1
 
 class FAnimepoySceneViewExtension : public FSceneViewExtensionBase
 {
 public:
 	FAnimepoySceneViewExtension(const FAutoRegister& AutoRegister, UAnimepoySubsystem* WorldSubsystem);
 
-	virtual void SetupViewFamily(FSceneViewFamily& InViewFamily);
+	virtual void SetupViewFamily(FSceneViewFamily& InViewFamily) override {}
+	virtual void SetupView(FSceneViewFamily& InViewFamily, FSceneView& InView) override;
+	virtual void BeginRenderViewFamily(FSceneViewFamily& InViewFamily) override {}
 
-	virtual void SetupView(FSceneViewFamily& InViewFamily, FSceneView& InView) {}
-
-	virtual void BeginRenderViewFamily(FSceneViewFamily& InViewFamily) {}
-
-#if CUSTOM_SCENE_VIEW_EXTENSION
+#if USE_POST_DEFERRED_LIGHTING_PASS
 	// Called right after deferred lighting, before fog rendering.
 	virtual void PostDeferredLighting_RenderThread(FRDGBuilder& GraphBuilder, FSceneView& InView, TRDGUniformBufferRef<FSceneTextureUniformParameters> SceneTextures) override;
-#endif
+
+#endif // USE_POST_DEFERRED_LIGHTING_PASS
 
 	virtual void PrePostProcessPass_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& InView, const FPostProcessingInputs& Inputs) override;
-
 	virtual void SubscribeToPostProcessingPass(EPostProcessingPass Pass, FAfterPassCallbackDelegateArray& InOutPassCallbacks, bool bIsPassEnabled) override;
 
 private:
 	UAnimepoySubsystem* WorldSubsystem{};
-
 	FAnimepoyRenderProxy AnimepoyRenderProxy;
+	bool bEnable;
 
-	FScreenPassTexture DiffusionFilterPass(FRDGBuilder& GraphBuilder, const FSceneView& InView, const FPostProcessMaterialInputs& Inputs);
-
-	bool ShouldProcessThisView();
-
-protected:
-	virtual bool IsActiveThisFrame_Internal(const FSceneViewExtensionContext& Context) const 
-	{
-		return Context.GetWorld() == WorldSubsystem->GetWorld();
-	}
-
+	bool ShouldProcessThisView() const;
 };

@@ -22,13 +22,14 @@ FAnimepoySceneViewExtension::FAnimepoySceneViewExtension(const FAutoRegister& Au
 {
 }
 
-void FAnimepoySceneViewExtension::SetupViewFamily(FSceneViewFamily& InViewFamily)
+void FAnimepoySceneViewExtension::SetupView(FSceneViewFamily& InViewFamily, FSceneView& InView)
 {
 	AnimepoyRenderProxy = WorldSubsystem->GetAnimepoyRenderProxy();
+	bEnable = InView.Family->Scene->GetWorld() == WorldSubsystem->GetWorld() && AnimepoyRenderProxy.bEnable;
 }
 
-#if CUSTOM_SCENE_VIEW_EXTENSION
-void FAnimepoySceneViewExtension::PostDeferredLighting_RenderThread(FRDGBuilder& GraphBuilder, FSceneView& InView, TRDGUniformBufferRef<FSceneTextureUniformParameters> SceneTextures) 
+#if USE_POST_DEFERRED_LIGHTING_PASS
+void FAnimepoySceneViewExtension::PostDeferredLighting_RenderThread(FRDGBuilder& GraphBuilder, FSceneView& InView, TRDGUniformBufferRef<FSceneTextureUniformParameters> SceneTextures)
 {
 	check(InView.bIsViewInfo);
 	auto& View = static_cast<const FViewInfo&>(InView);
@@ -48,7 +49,7 @@ void FAnimepoySceneViewExtension::PostDeferredLighting_RenderThread(FRDGBuilder&
 		AddLineArtPass(GraphBuilder, View, PassInputs);
 	}
 }
-#endif
+#endif // USE_POST_DEFERRED_LIGHTING_PASS
 
 void FAnimepoySceneViewExtension::PrePostProcessPass_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& InView, const FPostProcessingInputs& Inputs)
 {
@@ -70,30 +71,27 @@ void FAnimepoySceneViewExtension::SubscribeToPostProcessingPass(EPostProcessingP
 {
 	if (Pass == EPostProcessingPass::Tonemap && ShouldProcessThisView() && AnimepoyRenderProxy.bDiffusionFilter)
 	{
-		InOutPassCallbacks.Add(FAfterPassCallbackDelegate::CreateRaw(this, &FAnimepoySceneViewExtension::DiffusionFilterPass));
+		InOutPassCallbacks.Add(FAfterPassCallbackDelegate::CreateLambda([this](FRDGBuilder& GraphBuilder, const FSceneView& InView, const FPostProcessMaterialInputs& Inputs) ->FScreenPassTexture {
+			check(InView.bIsViewInfo);
+			auto& View = static_cast<const FViewInfo&>(InView);
+
+			FPostProcessDiffusionInputs PassInputs;
+			PassInputs.OverrideOutput = Inputs.OverrideOutput;
+			PassInputs.SceneColor = FScreenPassTexture::CopyFromSlice(GraphBuilder, Inputs.GetInput(EPostProcessMaterialInput::SceneColor));
+			PassInputs.PreTonemapColor = (*Inputs.SceneTextures.SceneTextures.GetUniformBuffer())->SceneColorTexture;
+			PassInputs.Intensity = AnimepoyRenderProxy.DiffusionFilterIntensity;
+			PassInputs.LuminanceMin = AnimepoyRenderProxy.DiffusionLuminanceMin;
+			PassInputs.LuminanceMax = AnimepoyRenderProxy.DiffusionLuminanceMax;
+			PassInputs.BlurPercentage = AnimepoyRenderProxy.DiffusionBlurPercentage;
+			PassInputs.BlendMode = (int32)AnimepoyRenderProxy.DiffusionBlendMode;
+			PassInputs.bDebugMask = AnimepoyRenderProxy.bPreviewDiffusionMask;
+
+			return AddPostProcessDiffusionPass(GraphBuilder, View, PassInputs);
+			}));
 	}
 }
 
-FScreenPassTexture FAnimepoySceneViewExtension::DiffusionFilterPass(FRDGBuilder& GraphBuilder, const FSceneView& InView, const FPostProcessMaterialInputs& Inputs)
+bool FAnimepoySceneViewExtension::ShouldProcessThisView() const
 {
-	check(InView.bIsViewInfo);
-	auto& View = static_cast<const FViewInfo&>(InView);
-
-	FPostProcessDiffusionInputs PassInputs;
-	PassInputs.OverrideOutput = Inputs.OverrideOutput;
-	PassInputs.SceneColor = FScreenPassTexture::CopyFromSlice(GraphBuilder, Inputs.GetInput(EPostProcessMaterialInput::SceneColor));
-	PassInputs.PreTonemapColor = (*Inputs.SceneTextures.SceneTextures.GetUniformBuffer())->SceneColorTexture;
-	PassInputs.Intensity = AnimepoyRenderProxy.DiffusionFilterIntensity;
-	PassInputs.LuminanceMin = AnimepoyRenderProxy.DiffusionLuminanceMin;
-	PassInputs.LuminanceMax = AnimepoyRenderProxy.DiffusionLuminanceMax;
-	PassInputs.BlurPercentage = AnimepoyRenderProxy.DiffusionBlurPercentage;
-	PassInputs.BlendMode = (int32)AnimepoyRenderProxy.DiffusionBlendMode;
-	PassInputs.bDebugMask = AnimepoyRenderProxy.bPreviewDiffusionMask;
-
-	return AddPostProcessDiffusionPass(GraphBuilder, View, PassInputs);
-}
-
-bool FAnimepoySceneViewExtension::ShouldProcessThisView()
-{
-	return AnimepoyRenderProxy.bEnable;
+	return bEnable;
 }

@@ -30,14 +30,6 @@ float Min4(float A, float B, float C, float D)
     return min(min(A, B), min(C, D));
 }
 
-float3 GetWorldPosition(int2 PixelPos, float DeviceZ)
-{
-    float2 ScreenUV = ((float2) PixelPos + 0.5) * View.BufferSizeAndInvSize.zw;
-    float2 ScreenPosition = (ScreenUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
-    float SceneDepth = ConvertFromDeviceZ(DeviceZ);
-    return mul(float4(GetScreenPositionForProjectionType(ScreenPosition, SceneDepth), SceneDepth, 1), LWCHackToFloat(PrimaryView.ScreenToWorld)).xyz;
-}
-
 uint EncodeLine(float DeviceZ)
 {
     return asuint(DeviceZ);
@@ -75,18 +67,19 @@ struct PixelData
     uint    Flags;
 };
 
-#define NO_LINE_MASK 0x80
-#define NO_LINE_GROUP_MASK 0x40
+#define NOLINE_MASK 0x80
+#define NOLINEGROUP_MASK 0x40
+
+#define LINEFLAG_GET_NOLINE(Flags) Flags & NOLINE_MASK
+#define LINEFLAG_GET_NOLINEGROUP(Flags) Flags & NOLINEGROUP_MASK
 
 PixelData GetPixelData(int2 PixelPos)
 {
     PixelData OutPixel = (PixelData)0;
 
     float3 CameraVector;
-    {
-        OutPixel.DeviceZ = LookupDeviceZ(PixelPos);
-        ReconstructTranslatedWorldPositionAndCameraDirectionFromDeviceZ(PixelPos, OutPixel.DeviceZ, OutPixel.WorldPosition, CameraVector);
-    }
+    OutPixel.DeviceZ = LookupDeviceZ(PixelPos);
+    ReconstructTranslatedWorldPositionAndCameraDirectionFromDeviceZ(PixelPos, OutPixel.DeviceZ, OutPixel.WorldPosition, CameraVector);
     
 #if SUBSTRATE_ENABLED    
 	FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(PixelPos, uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
@@ -107,31 +100,24 @@ PixelData GetPixelData(int2 PixelPos)
         OutPixel.Flags = uint(255.0 * ToonParams.x);
     }
 #else
-    uint ShadingModelID = 0;
+    float4 GBufferB = SceneTexturesStruct.GBufferBTexture[PixelPos];
+    uint ShadingModelID = DecodeShadingModelId(GBufferB.a);
+
+    OutPixel.Metallic = GBufferB.r;
+    OutPixel.Specular = GBufferB.g;
+    OutPixel.Roughness = GBufferB.b;
+    OutPixel.ShadingModel = ShadingModelID;
+    
+    bool bHasNormal = ShadingModelID != SHADINGMODELID_UNLIT;
+    if (bHasNormal)
     {
-        float4 GBufferB = GBufferBTexture[PixelPos];
-        ShadingModelID = DecodeShadingModelId(GBufferB.a);
-
-        OutPixel.Metallic = GBufferB.r;
-        OutPixel.Specular = GBufferB.g;
-        OutPixel.Roughness = GBufferB.b;
-        OutPixel.ShadingModel = GBufferB.a;
-
-        OutPixel.bNoLine = OutPixel.Specular == NonLineSpecular;
+        OutPixel.WorldNormal = DecodeNormal(SceneTexturesStruct.GBufferATexture[PixelPos].xyz);
+        OutPixel.Fresnel = 1 - abs(dot(OutPixel.WorldNormal, CameraVector));
     }
-
+    
+    if (ShadingModelID == SHADINGMODELID_EYE)
     {
-        bool bHasNormal = ShadingModelID != SHADINGMODELID_UNLIT;
-        OutPixel.WorldNormal = bHasNormal ? DecodeNormal(GBufferATexture[PixelPos].xyz) : half3(0, 0, 0);
-        OutPixel.Fresnel = 0.f;
-
-        if (bHasNormal)
-        {
-            float3 V = -normalize(OutPixel.WorldPosition - PrimaryView.TranslatedWorldCameraOrigin);
-            float3 N = OutPixel.WorldNormal;
-            float Fresnel = 1 - abs(dot(N, V));
-            OutPixel.Fresnel = Fresnel;
-        }
+        OutPixel.Flags = 255.0 * GBufferB.r; // Metallic
     }
 #endif // SUBSTRATE_ENABLED
 
@@ -141,13 +127,12 @@ PixelData GetPixelData(int2 PixelPos)
 bool DetectLine(PixelData Pixel0, PixelData Pixel1, out bool bShiftLine)
 {
     bool bNear = Pixel0.DeviceZ > Pixel1.DeviceZ;
-
     bShiftLine = !bNear;
 
     // Cancel line if near object has no line flag.
-    bool bNoLine = (bNear ? Pixel0.Flags : Pixel1.Flags) & NO_LINE_MASK;
-    bool bNoLineWith = (Pixel0.Flags & Pixel1.Flags) & NO_LINE_GROUP_MASK;
-    if (bNoLine || bNoLineWith)
+    bool bNoLine = LINEFLAG_GET_NOLINE(bNear ? Pixel0.Flags : Pixel1.Flags);
+    bool bNoLineGroup = LINEFLAG_GET_NOLINEGROUP(Pixel0.Flags) & LINEFLAG_GET_NOLINEGROUP(Pixel1.Flags);
+    if (bNoLine || bNoLineGroup)
     {
         return false;
     } 
@@ -158,10 +143,19 @@ bool DetectLine(PixelData Pixel0, PixelData Pixel1, out bool bShiftLine)
         return true;
     }
 #else
-    if (Pixel0.ShadingModel != Pixel1.ShadingModel)
+    if (Pixel0.ShadingModel != Pixel1.ShadingModel || Pixel0.Specular !=Pixel1.Specular)
     {
         return true;
     }
+
+    // MaterialLine
+    float DeltaMetallic = abs(Pixel0.Metallic - Pixel1.Metallic);
+    float DeltaRoughness = abs(Pixel0.Roughness - Pixel1.Roughness);
+    if (DeltaMetallic + DeltaRoughness > MaterialThreshold)
+    {
+        return true;
+    }
+#endif // SUBSTRATE_ENABLED
 
     // MaterialLine
     float DeltaMetallic = abs(Pixel0.Metallic - Pixel1.Metallic);
