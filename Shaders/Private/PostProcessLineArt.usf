@@ -143,25 +143,23 @@ bool DetectLine(PixelData Pixel0, PixelData Pixel1, out bool bShiftLine)
         return true;
     }
 #else
-    if (Pixel0.ShadingModel != Pixel1.ShadingModel || Pixel0.Specular !=Pixel1.Specular)
+    if((bNear ? Pixel0.ShadingModel : Pixel1.ShadingModel) == SHADINGMODELID_TWOSIDED_FOLIAGE)
     {
-        return true;
+        return false;
     }
-
-    // MaterialLine
-    float DeltaMetallic = abs(Pixel0.Metallic - Pixel1.Metallic);
-    float DeltaRoughness = abs(Pixel0.Roughness - Pixel1.Roughness);
-    if (DeltaMetallic + DeltaRoughness > MaterialThreshold)
+    
+    if (Pixel0.ShadingModel != Pixel1.ShadingModel || Pixel0.Specular !=Pixel1.Specular)
     {
         return true;
     }
 #endif // SUBSTRATE_ENABLED
 
     // MaterialLine
+#if SUBSTRATE_ENABLED
+#else
     float DeltaMetallic = abs(Pixel0.Metallic - Pixel1.Metallic);
-    float DeltaSpecular = abs(Pixel0.Specular - Pixel1.Specular);
     float DeltaRoughness = abs(Pixel0.Roughness - Pixel1.Roughness);
-    if (DeltaMetallic + DeltaSpecular + DeltaRoughness > MaterialThreshold)
+    if (DeltaMetallic + DeltaRoughness > MaterialThreshold)
     {
         return true;
     }
