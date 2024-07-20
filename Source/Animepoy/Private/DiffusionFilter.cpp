@@ -1,4 +1,4 @@
-#include "PostProcessDiffusionFilter.h"
+#include "DiffusionFilter.h"
 #include "PostProcess/PostProcessDownsample.h"
 #include "PostProcess/PostProcessWeightedSampleSum.h"
 #include "DataDrivenShaderPlatformInfo.h"
@@ -40,7 +40,7 @@ namespace {
 		}
 	};
 
-	IMPLEMENT_GLOBAL_SHADER(FGenerateMaskCS, "/AnimepoyShaders/Private/PostProcessDiffusionFilter.usf", "GenerateMaskCS", SF_Compute);
+	IMPLEMENT_GLOBAL_SHADER(FGenerateMaskCS, "/AnimepoyShaders/Private/DiffusionFilter.usf", "GenerateMaskCS", SF_Compute);
 
 	class FCompositePS : public FGlobalShader
 	{
@@ -71,7 +71,7 @@ namespace {
 			END_SHADER_PARAMETER_STRUCT()
 	};
 
-	IMPLEMENT_GLOBAL_SHADER(FCompositePS, "/AnimepoyShaders/Private/PostProcessDiffusionFilter.usf", "CompositePS", SF_Pixel);
+	IMPLEMENT_GLOBAL_SHADER(FCompositePS, "/AnimepoyShaders/Private/DiffusionFilter.usf", "CompositePS", SF_Pixel);
 }
 
 FScreenPassTexture AddPostProcessDiffusionPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, FPostProcessDiffusionInputs& Inputs)

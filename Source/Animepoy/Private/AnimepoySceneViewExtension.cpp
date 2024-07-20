@@ -12,9 +12,9 @@
 #include "PostProcess/PostProcessMaterialInputs.h"
 #include "AnimepoySubsystem.h"
 #include "Animepoy.h"
-#include "PostProcessLineArt.h"
-#include "PostProcessKuwaharaFilter.h"
-#include "PostProcessDiffusionFilter.h"
+#include "LineArt.h"
+#include "SketchFilter.h"
+#include "DiffusionFilter.h"
 
 FAnimepoySceneViewExtension::FAnimepoySceneViewExtension(const FAutoRegister& AutoRegister, UAnimepoySubsystem* WorldSubsystem)
 	: FSceneViewExtensionBase(AutoRegister)
@@ -33,6 +33,18 @@ void FAnimepoySceneViewExtension::PostDeferredLighting_RenderThread(FRDGBuilder&
 {
 	check(InView.bIsViewInfo);
 	auto& View = static_cast<const FViewInfo&>(InView);
+
+	if(ShouldProcessThisView() && AnimepoyRenderProxy.bSketchFilter)
+	{
+		FSketchFilterInputs PassInputs;
+		PassInputs.SceneTextures = SceneTextures;
+		PassInputs.FilterSize = AnimepoyRenderProxy.SketchFilterSize;
+		PassInputs.FilterType = AnimepoyRenderProxy.SketchFilterType;
+		PassInputs.FilterTarget = AnimepoyRenderProxy.SketchFilterTarget;
+		PassInputs.bDebugFilter = AnimepoyRenderProxy.bDebugSketchFilter;
+
+		AddSketchFilterPass(GraphBuilder, View, PassInputs);
+	}
 
 	if (ShouldProcessThisView() && AnimepoyRenderProxy.bLineArt)
 	{
@@ -53,18 +65,37 @@ void FAnimepoySceneViewExtension::PostDeferredLighting_RenderThread(FRDGBuilder&
 
 void FAnimepoySceneViewExtension::PrePostProcessPass_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& InView, const FPostProcessingInputs& Inputs)
 {
+#if !USE_POST_DEFERRED_LIGHTING_PASS
 	check(InView.bIsViewInfo);
 	auto& View = static_cast<const FViewInfo&>(InView);
 
-	if (ShouldProcessThisView() && AnimepoyRenderProxy.bPrePostProcessKuwaharaFilter)
+	if (ShouldProcessThisView() && AnimepoyRenderProxy.bSketchFilter)
 	{
-		FKuwaharaFilterInputs PassInputs;
-		PassInputs.Target = (*Inputs.SceneTextures)->SceneColorTexture;
-		PassInputs.TargetType = EKuwaharaFilterTargetType::SceneColor;
-		PassInputs.FilterSize = AnimepoyRenderProxy.PrePostProcessKuwaharaFilterSize;
+		FSketchFilterInputs PassInputs;
+		PassInputs.SceneTextures = Inputs.SceneTextures;
+		PassInputs.FilterSize = AnimepoyRenderProxy.SketchFilterSize;
+		PassInputs.FilterType = AnimepoyRenderProxy.SketchFilterType;
+		PassInputs.FilterTarget = AnimepoyRenderProxy.SketchFilterTarget;
+		PassInputs.bDebugFilter = AnimepoyRenderProxy.bDebugSketchFilter;
 
-		AddKuwaharaFilterPass(GraphBuilder, View, PassInputs);
+		AddSketchFilterPass(GraphBuilder, View, PassInputs);
 	}
+
+	if (ShouldProcessThisView() && AnimepoyRenderProxy.bLineArt)
+	{
+		FLineArtPassInputs PassInputs;
+		PassInputs.SceneTextures = Inputs.SceneTextures;
+		PassInputs.DepthLineIntensity = AnimepoyRenderProxy.DepthLineIntensity;
+		PassInputs.NormalLineIntensity = AnimepoyRenderProxy.NormalLineIntensity;
+		PassInputs.PlanarLineIntensity = AnimepoyRenderProxy.PlanarLineIntensity;
+		PassInputs.MaterialLineIntensity = AnimepoyRenderProxy.MaterialLineIntensity;
+		PassInputs.LineWidth = AnimepoyRenderProxy.LineWidth;
+		PassInputs.LineColor = AnimepoyRenderProxy.LineColor;
+		PassInputs.bPreview = AnimepoyRenderProxy.bPreviewLine;
+
+		AddLineArtPass(GraphBuilder, View, PassInputs);
+	}
+#endif // !USE_POST_DEFERRED_LIGHTING_PASS
 }
 
 void FAnimepoySceneViewExtension::SubscribeToPostProcessingPass(EPostProcessingPass Pass, FAfterPassCallbackDelegateArray& InOutPassCallbacks, bool bIsPassEnabled)
@@ -83,7 +114,7 @@ void FAnimepoySceneViewExtension::SubscribeToPostProcessingPass(EPostProcessingP
 			PassInputs.LuminanceMin = AnimepoyRenderProxy.DiffusionLuminanceMin;
 			PassInputs.LuminanceMax = AnimepoyRenderProxy.DiffusionLuminanceMax;
 			PassInputs.BlurPercentage = AnimepoyRenderProxy.DiffusionBlurPercentage;
-			PassInputs.BlendMode = (int32)AnimepoyRenderProxy.DiffusionBlendMode;
+			PassInputs.BlendMode = AnimepoyRenderProxy.DiffusionBlendMode;
 			PassInputs.bDebugMask = AnimepoyRenderProxy.bPreviewDiffusionMask;
 
 			return AddPostProcessDiffusionPass(GraphBuilder, View, PassInputs);

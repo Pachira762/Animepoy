@@ -7,6 +7,20 @@
 #include "Animepoy.generated.h"
 
 UENUM(BlueprintType)
+enum class ESketchFilterType : uint8
+{
+	Kuwahara,
+	SymmetricNearestNeighbor,
+};
+
+UENUM(BlueprintType)
+enum class ESketchFilterTarget : uint8
+{
+	SceneColor,
+	Lighting,
+};
+
+UENUM(BlueprintType)
 enum class EAnimeDiffusionBlendMode : uint8
 {
 	Lighten,
@@ -30,8 +44,11 @@ struct FAnimepoyRenderProxy
 	bool bPreviewLine;
 
 	// Kuwahara Filter
-	bool bPrePostProcessKuwaharaFilter;
-	int32 PrePostProcessKuwaharaFilterSize;
+	bool bSketchFilter;
+	int32 SketchFilterSize;
+	ESketchFilterType SketchFilterType;
+	ESketchFilterTarget SketchFilterTarget;
+	bool bDebugSketchFilter;
 
 	// Diffusion Filter
 	bool bDiffusionFilter;
@@ -73,11 +90,20 @@ public:
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Line Art")
 	bool bPreviewLine = false;
 
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Kuwahara Filter")
-	bool bPrePostProcessKuwaharaFilter = false;
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Sketch Filter")
+	bool bSketchFilter = false;
 
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Kuwahara Filter", meta = (ClampMin = "1", ClampMax = "7"))
-	int32 PrePostProcessKuwaharaFilterSize = 1;
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Sketch Filter", meta = (ClampMin = "1", ClampMax = "7"))
+	int32 SketchFilterSize = 1;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Sketch Filter")
+	ESketchFilterType SketchFilterType = ESketchFilterType::Kuwahara;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Sketch Filter")
+	ESketchFilterTarget SketchFilterTarget = ESketchFilterTarget::SceneColor;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Sketch Filter")
+	bool bDebugSketchFilter = false;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Diffusion Filter")
 	bool bDiffusionFilter = false;

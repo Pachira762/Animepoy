@@ -45,30 +45,33 @@ void AAnimepoy::Tick(float DeltaSeconds)
 	{
 		if (UAnimepoySubsystem* AnimepoySubsystem = World->GetSubsystem<UAnimepoySubsystem>()) 
 		{
-			FAnimepoyRenderProxy TempSettings;
-			TempSettings.bEnable = !this->IsHidden();
+			FAnimepoyRenderProxy Settings;
+			Settings.bEnable = !this->IsHidden();
 
-			TempSettings.bLineArt = bLineArt && LineWidth > 0 && LineColor.A != 0.f;
-			TempSettings.LineColor = LineColor;
-			TempSettings.LineWidth = LineWidth;
-			TempSettings.DepthLineIntensity = DepthLineIntensity;
-			TempSettings.NormalLineIntensity = NormalLineIntensity;
-			TempSettings.MaterialLineIntensity = MaterialLineIntensity;
-			TempSettings.PlanarLineIntensity = PlanarLineIntensity;
-			TempSettings.bPreviewLine = bPreviewLine;
+			Settings.bLineArt = bLineArt && LineWidth > 0 && LineColor.A != 0.f;
+			Settings.LineColor = LineColor;
+			Settings.LineWidth = LineWidth;
+			Settings.DepthLineIntensity = DepthLineIntensity;
+			Settings.NormalLineIntensity = NormalLineIntensity;
+			Settings.MaterialLineIntensity = MaterialLineIntensity;
+			Settings.PlanarLineIntensity = PlanarLineIntensity;
+			Settings.bPreviewLine = bPreviewLine;
 
-			TempSettings.bPrePostProcessKuwaharaFilter = bPrePostProcessKuwaharaFilter;
-			TempSettings.PrePostProcessKuwaharaFilterSize = PrePostProcessKuwaharaFilterSize;
+			Settings.bSketchFilter = bSketchFilter && SketchFilterSize > 0;
+			Settings.SketchFilterSize = SketchFilterSize;
+			Settings.SketchFilterType = SketchFilterType;
+			Settings.SketchFilterTarget = SketchFilterTarget;
+			Settings.bDebugSketchFilter = bDebugSketchFilter;
 
-			TempSettings.bDiffusionFilter = bDiffusionFilter && DiffusionFilterIntensity != 0.f;
-			TempSettings.DiffusionFilterIntensity = DiffusionFilterIntensity;
-			TempSettings.DiffusionLuminanceMin = DiffusionLuminanceMin;
-			TempSettings.DiffusionLuminanceMax = DiffusionLuminanceMax;
-			TempSettings.DiffusionBlurPercentage = DiffusionBlurPercentage;
-			TempSettings.DiffusionBlendMode = DiffusionBlendMode;
-			TempSettings.bPreviewDiffusionMask = bPreviewDiffusionMask;
+			Settings.bDiffusionFilter = bDiffusionFilter && DiffusionFilterIntensity != 0.f;
+			Settings.DiffusionFilterIntensity = DiffusionFilterIntensity;
+			Settings.DiffusionLuminanceMin = DiffusionLuminanceMin;
+			Settings.DiffusionLuminanceMax = DiffusionLuminanceMax;
+			Settings.DiffusionBlurPercentage = DiffusionBlurPercentage;
+			Settings.DiffusionBlendMode = DiffusionBlendMode;
+			Settings.bPreviewDiffusionMask = bPreviewDiffusionMask;
 
-			AnimepoySubsystem->SetAnimepoyRenderProxy(TempSettings);
+			AnimepoySubsystem->SetAnimepoyRenderProxy(Settings);
 		}
 	}
 }

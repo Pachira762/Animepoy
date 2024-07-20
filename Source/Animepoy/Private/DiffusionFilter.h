@@ -3,6 +3,7 @@
 #pragma once
 
 #include "ScreenPass.h"
+#include "Animepoy.h"
 
 class FSceneTextureParameters;
 
@@ -16,7 +17,7 @@ struct FPostProcessDiffusionInputs
 	float LuminanceMax;
 	bool bPreTonemapLuminance;
 	float BlurPercentage;
-	int32 BlendMode;
+	EAnimeDiffusionBlendMode BlendMode;
 	bool bDebugMask;
 };
 

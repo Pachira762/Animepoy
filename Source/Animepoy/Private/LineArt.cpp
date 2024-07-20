@@ -1,4 +1,4 @@
-#include "PostProcessLineArt.h"
+#include "LineArt.h"
 #include "ShaderCompiler.h"
 #include "SceneRendering.h"
 #include "SceneTextureParameters.h"
@@ -26,7 +26,7 @@ namespace {
 			END_SHADER_PARAMETER_STRUCT()
 	};
 
-	IMPLEMENT_GLOBAL_SHADER(FDetectLineCS, "/AnimepoyShaders/Private/PostProcessLineArt.usf", "DetectLineCS", SF_Compute);
+	IMPLEMENT_GLOBAL_SHADER(FDetectLineCS, "/AnimepoyShaders/Private/LineArt.usf", "DetectLineCS", SF_Compute);
 
 	class FCompositeLinePS : public FGlobalShader
 	{
@@ -46,7 +46,7 @@ namespace {
 			END_SHADER_PARAMETER_STRUCT()
 	};
 
-	IMPLEMENT_GLOBAL_SHADER(FCompositeLinePS, "/AnimepoyShaders/Private/PostProcessLineArt.usf", "CompositeLinePS", SF_Pixel);
+	IMPLEMENT_GLOBAL_SHADER(FCompositeLinePS, "/AnimepoyShaders/Private/LineArt.usf", "CompositeLinePS", SF_Pixel);
 
 	class FClearSceneColorAndGBufferPS : public FGlobalShader
 	{
@@ -59,7 +59,7 @@ namespace {
 			END_SHADER_PARAMETER_STRUCT()
 	};
 
-	IMPLEMENT_GLOBAL_SHADER(FClearSceneColorAndGBufferPS, "/AnimepoyShaders/Private/PostProcessLineArt.usf", "ClearSceneColorAndGBufferPS", SF_Pixel);
+	IMPLEMENT_GLOBAL_SHADER(FClearSceneColorAndGBufferPS, "/AnimepoyShaders/Private/LineArt.usf", "ClearSceneColorAndGBufferPS", SF_Pixel);
 }
 
 namespace

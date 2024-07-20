@@ -1,0 +1,171 @@
+/*=============================================================================
+	PostProcessLine.usf: PostProcessing Line
+=============================================================================*/
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/ScreenPass.ush"
+#include "/Engine/Private/DeferredShadingCommon.ush"
+#include "/Engine/Private/PostProcessCommon.ush"
+#include "/Engine/Private/ColorSpace.ush"
+
+#define FILTER_TYPE_KUWAHARA 0
+#define FILTER_TYPE_SNN 1
+#define FILTER_TARGET_SCENECOLOR 0
+#define FILTER_TARGET_LIGHTING 1
+
+Texture2D SceneColorTexture;
+Texture2D BaseColorTexture;
+
+SCREEN_PASS_TEXTURE_VIEWPORT(Input)
+
+int FilterSize;
+int FilterType;
+int FilterTarget;
+int DebugFilter;
+
+float Luminance2(float3 Color)
+{
+    return Pow2(Luminance(Color));
+}
+
+RWTexture2D<float4> OutColorAndLuminanceTexture;
+
+[numthreads(8, 8, 1)]
+void SketchFilterSetupCS(int2 Id : SV_DispatchThreadID)
+{
+    int2 PixelPos = Input_ViewportMin + Id;
+    if (all(PixelPos < Input_ViewportMax))
+    {
+        float3 Color = (float3) 0;
+        
+        if (FilterTarget == FILTER_TARGET_SCENECOLOR)
+        {
+            Color = SceneColorTexture[PixelPos].rgb;
+        }
+        else // Lighting
+        {
+            float3 BaseColor = 0.99 * BaseColorTexture[PixelPos].rgb + 0.01;
+            float3 SceneColor = SceneColorTexture[PixelPos].rgb;
+            Color = SceneColor / BaseColor;
+        }
+        
+        OutColorAndLuminanceTexture[PixelPos] = float4(Color, Luminance2(Color));
+    }
+}
+
+Texture2D ColorAndLuminanceTexture;
+
+float4 CalcColorAndVariance(int2 LeftTop, int2 RightBottom)
+{
+    float4 Color = (float4) 0;
+
+    for (int y = LeftTop.y; y <= RightBottom.y; ++y)
+    {
+        for (int x = LeftTop.x; x <= RightBottom.x; ++x)
+        {
+            Color += ColorAndLuminanceTexture[int2(x, y)];
+        }
+    }
+
+    float Area = (RightBottom.x - LeftTop.x + 1) * (RightBottom.y - LeftTop.y + 1);
+    Color /= Area;
+    
+    return float4(Color.rgb, Color.a - Luminance2(Color.rgb));
+}
+
+float3 KuwaharaFilter(int2 PixelPos)
+{
+    int2 LeftTop = max(PixelPos - FilterSize, Input_ViewportMin);
+    int2 RightBottom = min(PixelPos + FilterSize, Input_ViewportMax - 1);
+    
+    float4 ColorAndVariance = CalcColorAndVariance(LeftTop, PixelPos);
+    float4 OutColorAndMinVariance = OutColorAndMinVariance = ColorAndVariance;
+
+    ColorAndVariance = CalcColorAndVariance(int2(PixelPos.x, LeftTop.y), int2(RightBottom.x, PixelPos.y));
+    if (ColorAndVariance.a < OutColorAndMinVariance.a)
+    {
+        OutColorAndMinVariance = ColorAndVariance;
+    }
+
+    ColorAndVariance = CalcColorAndVariance(int2(LeftTop.x, PixelPos.y), int2(PixelPos.x, RightBottom.y));
+    if (ColorAndVariance.a < OutColorAndMinVariance.a)
+    {
+        OutColorAndMinVariance = ColorAndVariance;
+    }
+
+    ColorAndVariance = CalcColorAndVariance(PixelPos, RightBottom);
+    if (ColorAndVariance.a < OutColorAndMinVariance.a)
+    {
+        OutColorAndMinVariance = ColorAndVariance;
+    }
+    
+    return OutColorAndMinVariance.rgb;
+}
+
+float4 SymmetricSample(int2 PixelPos, int2 Offset, float4 Center)
+{
+    float4 ColorA = ColorAndLuminanceTexture[clamp(PixelPos + Offset, Input_ViewportMin, Input_ViewportMax - 1)];
+    float4 ColorB = ColorAndLuminanceTexture[clamp(PixelPos - Offset, Input_ViewportMin, Input_ViewportMax - 1)];
+    float DistanceA = abs(ColorA.a - Center.a);
+    float DistanceB = abs(ColorB.a - Center.a);
+    return DistanceA < DistanceB ? ColorA : ColorB;
+}
+
+float3 SymmetricNearestNeighborFilter(int2 PixelPos)
+{
+    float4 Center = ColorAndLuminanceTexture[PixelPos];
+    float4 Color = Center;
+    float Weight = 1.0;
+    
+    for (int y = -FilterSize; y < 0; ++y)
+    {
+        for (int x = -FilterSize; x <= FilterSize; ++x)
+        {
+            Color += SymmetricSample(PixelPos, int2(x, y), Center);
+            Weight += 1.0;
+
+        }
+    }
+    
+    for (int x = -FilterSize; x < 0; ++x)
+    {
+        Color += SymmetricSample(PixelPos, int2(x, 0), Center);
+        Weight += 1.0;
+    }
+	
+    // float Weight = 2 * (FilterSize + 1) * FilterSize;
+    return Color.rgb / Weight;
+}
+
+void SketchFilterPS(float4 SvPosition : SV_POSITION, out float4 OutColor : SV_Target0)
+{
+    int2 PixelPos = int2(SvPosition.xy);
+    
+    float3 Color = (float3) 0;
+    if(FilterType == FILTER_TYPE_KUWAHARA)
+    {
+        Color = KuwaharaFilter(PixelPos);
+    }
+    else // SNN
+    {
+        Color = SymmetricNearestNeighborFilter(PixelPos);
+        // Color = ColorAndLuminanceTexture[PixelPos].rgb;
+    }
+    
+    if (DebugFilter)
+    {
+        OutColor = float4(Color, 0);
+    }
+    else
+    {
+        if (FilterTarget == FILTER_TARGET_SCENECOLOR)
+        {
+            OutColor = float4(Color, 0);
+        }
+        else // Lighting
+        {
+            float3 BaseColor = 0.99 * BaseColorTexture[PixelPos].rgb + 0.01;
+            OutColor = float4(BaseColor * Color, 0.0);
+        }
+    }
+}
