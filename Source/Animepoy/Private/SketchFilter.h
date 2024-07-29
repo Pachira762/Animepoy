@@ -7,10 +7,15 @@
 struct FSketchFilterInputs
 {
 	TRDGUniformBufferRef<FSceneTextureUniformParameters> SceneTextures;
-	int32 FilterSize;
+	bool bFilterSceneColor;
+	bool bFilterBaseColor;
+	bool bFilterWorldNormal;
 	ESketchFilterType FilterType;
-	ESketchFilterTarget FilterTarget;
+	int32 FilterSize;
+	ESketchFilterDirection FilterDirection;
 	bool bDebugFilter;
 };
 
-void AddSketchFilterPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FSketchFilterInputs& Inputs);
+void AddGBufferSketchFilterPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FSketchFilterInputs& Inputs);
+
+void AddSceneColorSketchFilterPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FSketchFilterInputs& Inputs);

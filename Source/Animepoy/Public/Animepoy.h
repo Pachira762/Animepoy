@@ -14,10 +14,15 @@ enum class ESketchFilterType : uint8
 };
 
 UENUM(BlueprintType)
-enum class ESketchFilterTarget : uint8
+enum class ESketchFilterDirection : uint8
 {
-	SceneColor,
-	Lighting,
+	None,
+	Color,
+	CrossColor,
+	Normal,
+	CrossNormal,
+	Depth,
+	DepthNormal,
 };
 
 UENUM(BlueprintType)
@@ -43,11 +48,14 @@ struct FAnimepoyRenderProxy
 	float PlanarLineIntensity;
 	bool bPreviewLine;
 
-	// Kuwahara Filter
+	// Sketch Filter
 	bool bSketchFilter;
-	int32 SketchFilterSize;
+	bool bFilterSceneColor;
+	bool bFilterBaseColor;
+	bool bFilterWorldNormal;
 	ESketchFilterType SketchFilterType;
-	ESketchFilterTarget SketchFilterTarget;
+	int32 SketchFilterSize;
+	ESketchFilterDirection SketchFilterDirection;
 	bool bDebugSketchFilter;
 
 	// Diffusion Filter
@@ -66,6 +74,11 @@ class ANIMEPOY_API AAnimepoy : public AActor
 	GENERATED_BODY()
 
 public:
+
+	//
+	// Line Art
+	//
+
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Line Art")
 	bool bLineArt = false;
 
@@ -90,20 +103,37 @@ public:
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Line Art")
 	bool bPreviewLine = false;
 
+	//
+	// Sketch Filter
+	//
+
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Sketch Filter")
 	bool bSketchFilter = false;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Sketch Filter")
+	bool bFilterSceneColor = true;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Sketch Filter")
+	bool bFilterBaseColor = false;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Sketch Filter")
+	bool bFilterWorldNormal = false;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Sketch Filter")
+	ESketchFilterType SketchFilterType = ESketchFilterType::Kuwahara;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Sketch Filter", meta = (ClampMin = "1", ClampMax = "7"))
 	int32 SketchFilterSize = 1;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Sketch Filter")
-	ESketchFilterType SketchFilterType = ESketchFilterType::Kuwahara;
-
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Sketch Filter")
-	ESketchFilterTarget SketchFilterTarget = ESketchFilterTarget::SceneColor;
+	ESketchFilterDirection SketchFilterDirection = ESketchFilterDirection::None;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Sketch Filter")
 	bool bDebugSketchFilter = false;
+
+	//
+	// Diffusion Filter
+	//
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Diffusion Filter")
 	bool bDiffusionFilter = false;
