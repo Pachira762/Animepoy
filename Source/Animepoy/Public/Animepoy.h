@@ -7,22 +7,22 @@
 #include "Animepoy.generated.h"
 
 UENUM(BlueprintType)
-enum class ESketchFilterType : uint8
+enum class ESketchFilterMethod : uint8
 {
-	Kuwahara,
+	ClassicKuwahara,
+	GeneralizedKuwahara,
+	AnisotropicKuwahara,
 	SymmetricNearestNeighbor,
+	MAX UMETA(Hidden),
 };
 
 UENUM(BlueprintType)
-enum class ESketchFilterDirection : uint8
+enum class ESketchFilterOrientation : uint8
 {
 	None,
 	Color,
-	CrossColor,
-	Normal,
-	CrossNormal,
 	Depth,
-	DepthNormal,
+	MAX UMETA(Hidden),
 };
 
 UENUM(BlueprintType)
@@ -32,6 +32,24 @@ enum class EAnimeDiffusionBlendMode : uint8
 	Screen,
 	Overlay,
 	SoftLight,
+};
+
+USTRUCT(BlueprintType)
+struct FSketchFilterSettings
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere)
+	bool bEnabled = false;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere)
+	ESketchFilterMethod FilterMethod = ESketchFilterMethod::ClassicKuwahara;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere)
+	int32 FilterSize = 1;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere)
+	ESketchFilterOrientation Orientation = ESketchFilterOrientation::None;
 };
 
 struct FAnimepoyRenderProxy
@@ -50,13 +68,9 @@ struct FAnimepoyRenderProxy
 
 	// Sketch Filter
 	bool bSketchFilter;
-	bool bFilterSceneColor;
-	bool bFilterBaseColor;
-	bool bFilterWorldNormal;
-	ESketchFilterType SketchFilterType;
-	int32 SketchFilterSize;
-	ESketchFilterDirection SketchFilterDirection;
-	bool bDebugSketchFilter;
+	FSketchFilterSettings SceneColorSketchFilterSettings;
+	FSketchFilterSettings BaseColorSketchFilterSettings;
+	FSketchFilterSettings WorldNormalSketchFilterSettings;
 
 	// Diffusion Filter
 	bool bDiffusionFilter;
@@ -111,25 +125,13 @@ public:
 	bool bSketchFilter = false;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Sketch Filter")
-	bool bFilterSceneColor = true;
+	FSketchFilterSettings SceneColorSketchFilterSettings;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Sketch Filter")
-	bool bFilterBaseColor = false;
+	FSketchFilterSettings BaseColorSketchFilterSettings;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Sketch Filter")
-	bool bFilterWorldNormal = false;
-
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Sketch Filter")
-	ESketchFilterType SketchFilterType = ESketchFilterType::Kuwahara;
-
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Sketch Filter", meta = (ClampMin = "1", ClampMax = "7"))
-	int32 SketchFilterSize = 1;
-
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Sketch Filter")
-	ESketchFilterDirection SketchFilterDirection = ESketchFilterDirection::None;
-
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Sketch Filter")
-	bool bDebugSketchFilter = false;
+	FSketchFilterSettings WorldNormalSketchFilterSettings;
 
 	//
 	// Diffusion Filter
@@ -157,7 +159,7 @@ public:
 	bool bPreviewDiffusionMask = false;
 
 public:
-	AAnimepoy();
+	AAnimepoy(const FObjectInitializer& ObjectInitializer);
 
 protected:
 	virtual void BeginPlay() override;

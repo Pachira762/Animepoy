@@ -16,6 +16,20 @@
 #include "SketchFilter.h"
 #include "DiffusionFilter.h"
 
+namespace
+{
+	FRDGTextureRef GetOrientationTexture(ESketchFilterOrientation Orientation, FRDGTextureRef ColorTexture, FRDGTextureRef DepthTexture)
+	{
+		switch (Orientation)
+		{
+		case ESketchFilterOrientation::None: return nullptr;
+		case ESketchFilterOrientation::Color: return ColorTexture;
+		case ESketchFilterOrientation::Depth: return DepthTexture;
+		default: return nullptr;
+		}
+	}
+}
+
 FAnimepoySceneViewExtension::FAnimepoySceneViewExtension(const FAutoRegister& AutoRegister, UAnimepoySubsystem* WorldSubsystem)
 	: FSceneViewExtensionBase(AutoRegister)
 	, WorldSubsystem(WorldSubsystem)
@@ -33,20 +47,37 @@ void FAnimepoySceneViewExtension::PostRenderBasePassDeferred_RenderThread(FRDGBu
 	check(InView.bIsViewInfo);
 	auto& View = static_cast<const FViewInfo&>(InView);
 
-	if (ShouldProcessThisView() && AnimepoyRenderProxy.bSketchFilter && (AnimepoyRenderProxy.bFilterBaseColor || AnimepoyRenderProxy.bFilterWorldNormal))
+	if (ShouldProcessThisView())
 	{
-		FGBufferSketchFilterInputs PassInputs{
-			RenderTargets,
-		};
-		PassInputs.SceneTextures = SceneTextures;
-		PassInputs.bProcessBaseColor = AnimepoyRenderProxy.bFilterBaseColor;
-		PassInputs.bProcessWorldNormal = AnimepoyRenderProxy.bFilterWorldNormal;
-		PassInputs.FilterType = AnimepoyRenderProxy.SketchFilterType;
-		PassInputs.FilterSize = AnimepoyRenderProxy.SketchFilterSize;
-		PassInputs.FilterDirection = AnimepoyRenderProxy.SketchFilterDirection;
-		PassInputs.bDebugFilter = AnimepoyRenderProxy.bDebugSketchFilter;
+		if (AnimepoyRenderProxy.bSketchFilter && AnimepoyRenderProxy.BaseColorSketchFilterSettings.bEnabled)
+		{
+			const FSketchFilterSettings& Settings = AnimepoyRenderProxy.BaseColorSketchFilterSettings;
 
-		AddGBufferSketchFilterPass(GraphBuilder, View, PassInputs);
+			FSketchFilterInput PassInputs;
+			PassInputs.RenderTarget = RenderTargets[3]; // GBufferC
+			PassInputs.TargetType = ESketchFilterTargetType::Color;
+			PassInputs.FilterMethod = Settings.FilterMethod;
+			PassInputs.FilterSize = Settings.FilterSize;
+			PassInputs.Orientation = Settings.Orientation;
+			PassInputs.OrientationTexture = GetOrientationTexture(Settings.Orientation, RenderTargets[3].GetTexture(), RenderTargets.DepthStencil.GetTexture());
+
+			AddSketchFilterPass(GraphBuilder, View, PassInputs);
+		}
+
+		if (AnimepoyRenderProxy.bSketchFilter && AnimepoyRenderProxy.WorldNormalSketchFilterSettings.bEnabled)
+		{
+			const FSketchFilterSettings& Settings = AnimepoyRenderProxy.WorldNormalSketchFilterSettings;
+
+			FSketchFilterInput PassInputs;
+			PassInputs.RenderTarget = RenderTargets[1]; // GBufferA
+			PassInputs.TargetType = ESketchFilterTargetType::Normal;
+			PassInputs.FilterMethod = Settings.FilterMethod;
+			PassInputs.FilterSize = Settings.FilterSize;
+			PassInputs.Orientation = Settings.Orientation;
+			PassInputs.OrientationTexture = GetOrientationTexture(Settings.Orientation, RenderTargets[3].GetTexture(), RenderTargets.DepthStencil.GetTexture());
+
+			AddSketchFilterPass(GraphBuilder, View, PassInputs);
+		}
 	}
 }
 
@@ -56,31 +87,37 @@ void FAnimepoySceneViewExtension::PostDeferredLighting_RenderThread(FRDGBuilder&
 	check(InView.bIsViewInfo);
 	auto& View = static_cast<const FViewInfo&>(InView);
 
-	if(ShouldProcessThisView() && AnimepoyRenderProxy.bSketchFilter && AnimepoyRenderProxy.bFilterSceneColor)
+	if(ShouldProcessThisView())
 	{
-		FPostProcessSketchFilterInputs PassInputs{};
-		PassInputs.SceneTextures = SceneTextures;
-		PassInputs.FilterType = AnimepoyRenderProxy.SketchFilterType;
-		PassInputs.FilterSize = AnimepoyRenderProxy.SketchFilterSize;
-		PassInputs.FilterDirection = AnimepoyRenderProxy.SketchFilterDirection;
-		PassInputs.bDebugFilter = AnimepoyRenderProxy.bDebugSketchFilter;
+		if (AnimepoyRenderProxy.bSketchFilter && AnimepoyRenderProxy.SceneColorSketchFilterSettings.bEnabled)
+		{
+			const FSketchFilterSettings& Settings = AnimepoyRenderProxy.SceneColorSketchFilterSettings;
 
-		AddSceneColorSketchFilterPass(GraphBuilder, View, PassInputs);
-	}
+			FSketchFilterInput PassInputs;
+			PassInputs.RenderTarget = FRenderTargetBinding((*SceneTextures)->SceneColorTexture, ERenderTargetLoadAction::ELoad);
+			PassInputs.TargetType = ESketchFilterTargetType::Color;
+			PassInputs.FilterMethod = Settings.FilterMethod;
+			PassInputs.FilterSize = Settings.FilterSize;
+			PassInputs.Orientation = Settings.Orientation;
+			PassInputs.OrientationTexture = GetOrientationTexture(Settings.Orientation, (*SceneTextures)->SceneColorTexture, (*SceneTextures)->SceneDepthTexture);
 
-	if (ShouldProcessThisView() && AnimepoyRenderProxy.bLineArt)
-	{
-		FLineArtPassInputs PassInputs;
-		PassInputs.SceneTextures = SceneTextures;
-		PassInputs.DepthLineIntensity = AnimepoyRenderProxy.DepthLineIntensity;
-		PassInputs.NormalLineIntensity = AnimepoyRenderProxy.NormalLineIntensity;
-		PassInputs.PlanarLineIntensity = AnimepoyRenderProxy.PlanarLineIntensity;
-		PassInputs.MaterialLineIntensity = AnimepoyRenderProxy.MaterialLineIntensity;
-		PassInputs.LineWidth = AnimepoyRenderProxy.LineWidth;
-		PassInputs.LineColor = AnimepoyRenderProxy.LineColor;
-		PassInputs.bPreview = AnimepoyRenderProxy.bPreviewLine;
+			AddSketchFilterPass(GraphBuilder, View, PassInputs);
+		}
 
-		AddLineArtPass(GraphBuilder, View, PassInputs);
+		if (AnimepoyRenderProxy.bLineArt)
+		{
+			FLineArtPassInputs PassInputs;
+			PassInputs.SceneTextures = SceneTextures;
+			PassInputs.DepthLineIntensity = AnimepoyRenderProxy.DepthLineIntensity;
+			PassInputs.NormalLineIntensity = AnimepoyRenderProxy.NormalLineIntensity;
+			PassInputs.PlanarLineIntensity = AnimepoyRenderProxy.PlanarLineIntensity;
+			PassInputs.MaterialLineIntensity = AnimepoyRenderProxy.MaterialLineIntensity;
+			PassInputs.LineWidth = AnimepoyRenderProxy.LineWidth;
+			PassInputs.LineColor = AnimepoyRenderProxy.LineColor;
+			PassInputs.bPreview = AnimepoyRenderProxy.bPreviewLine;
+
+			AddLineArtPass(GraphBuilder, View, PassInputs);
+		}
 	}
 }
 #endif // USE_POST_DEFERRED_LIGHTING_PASS

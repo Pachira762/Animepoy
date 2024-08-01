@@ -5,8 +5,11 @@
 #include "AnimepoySubsystem.h"
 
 // Sets default values
-AAnimepoy::AAnimepoy()
+AAnimepoy::AAnimepoy(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
 {
+	RootComponent = ObjectInitializer.CreateDefaultSubobject<USceneComponent>(this, TEXT("DefaultSceneRoot"));
+
 	PrimaryActorTick.bCanEverTick = true;
 }
 
@@ -57,14 +60,10 @@ void AAnimepoy::Tick(float DeltaSeconds)
 			Settings.PlanarLineIntensity = PlanarLineIntensity;
 			Settings.bPreviewLine = bPreviewLine;
 
-			Settings.bSketchFilter = bSketchFilter && (bFilterSceneColor || bFilterBaseColor || bFilterWorldNormal) && SketchFilterSize > 0;
-			Settings.bFilterSceneColor = bFilterSceneColor;
-			Settings.bFilterBaseColor = bFilterBaseColor;
-			Settings.bFilterWorldNormal = bFilterWorldNormal;
-			Settings.SketchFilterType = SketchFilterType;
-			Settings.SketchFilterSize = SketchFilterSize;
-			Settings.SketchFilterDirection = SketchFilterDirection;
-			Settings.bDebugSketchFilter = bDebugSketchFilter;
+			Settings.bSketchFilter = bSketchFilter && (SceneColorSketchFilterSettings.bEnabled || BaseColorSketchFilterSettings.bEnabled || WorldNormalSketchFilterSettings.bEnabled);
+			Settings.SceneColorSketchFilterSettings = SceneColorSketchFilterSettings;
+			Settings.BaseColorSketchFilterSettings = BaseColorSketchFilterSettings;
+			Settings.WorldNormalSketchFilterSettings = WorldNormalSketchFilterSettings;
 
 			Settings.bDiffusionFilter = bDiffusionFilter && DiffusionFilterIntensity != 0.f;
 			Settings.DiffusionFilterIntensity = DiffusionFilterIntensity;

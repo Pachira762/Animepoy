@@ -8,141 +8,181 @@
 #include "/Engine/Private/PostProcessCommon.ush"
 #include "/Engine/Private/ColorSpace.ush"
 
-#define FILTER_TYPE_KUWAHARA 0
-#define FILTER_TYPE_SNN 1
-#define FILTER_TARGET_SCENECOLOR 0
-#define FILTER_TARGET_LIGHTING 1
-
-int FilterSize;
-int FilterType;
-int FilterTarget;
-int DebugFilter;
+#define TARGET_TYPE_COLOR 0
+#define TARGET_TYPE_NORMAL 1
+#define FILTER_METHOD_CLASSIC_KUWAHARA 0
+#define FILTER_METHOD_GENERALIZED_KUWAHARA 1
+#define FILTER_METHOD_ANISOTROPIC_KUWAHARA 2
+#define FILTER_METHOD_SYMMETRIC_NEAREST_NEIGHBOR 3
+#define ORIENTTATION_NONE 0
+#define ORIENTTATION_COLOR 1
+#define ORIENTTATION_DEPTH 2
 
 SCREEN_PASS_TEXTURE_VIEWPORT(Input)
 
-Texture2D SceneColorTexture;
-// Texture2D SceneDepthTexture;
-Texture2D BaseColorTexture;
-Texture2D WorldNormalTexture;
+int FilterSize;
+
 Texture2D InputTexture;
 Texture2D OrientationTexture;
 
-float Luminance2(float3 Color)
+int2 ClampToViewport(int2 PixelPos)
 {
-    return Pow2(Luminance(Color));
+    return clamp(PixelPos, Input_ViewportMin, Input_ViewportMax - 1);
 }
 
-float4 ColorAndLuminance2(float3 Color)
+float3 SampleColor(int2 PixelPos)
 {
-    return float4(Color, Luminance2(Color));
+    return InputTexture[PixelPos].xyz;
 }
 
-float3 SampleSceneColor(int2 PixelPos)
+float4 SampleNormal(int2 PixelPos)
 {
-    int2 SamplePos = clamp(PixelPos, int2(0, 0), Input_ViewportMax - 1);
-    return SceneColorTexture[SamplePos].rgb;
+    float3 Normal = InputTexture[PixelPos].xyz;
+    return any(Normal) ? float4(2.0 * Normal - 1.0, 1.0) : float4(0, 0, 0, 0);
 }
 
-float4 SampleSceneColorAndLuminance2(int2 PixelPos)
+float4 ComputeColorMeanAndWeight(int2 LeftTop, int2 RightBottom)
 {
-    int2 SamplePos = clamp(PixelPos, int2(0, 0), Input_ViewportMax - 1);
-    return ColorAndLuminance2(SceneColorTexture[SamplePos].rgb);
+    float3 Accum = (float3) 0;
+    float3 Accum2 = (float3) 0;
+
+    for (int y = LeftTop.y; y <= RightBottom.y; ++y)
+    {
+        for (int x = LeftTop.x; x <= RightBottom.x; ++x)
+        {
+            float3 Color = SampleColor(int2(x, y));
+            Accum += Color;
+            Accum2 += Color * Color;
+        }
+    }
+
+    float InvWeight = 1.0 / ((RightBottom.x - LeftTop.x + 1) * (RightBottom.y - LeftTop.y + 1));
+    Accum *= InvWeight;
+    Accum2 *= InvWeight;
+    
+    float3 Variance = Accum2 - Pow2(Accum);
+    float Weight = 1.0 / (1.0 + 1000000.0 * (Variance.x + Variance.y + Variance.z));
+    
+    return float4(Accum, Weight);
 }
 
-float4 SampleInputColor(int2 PixelPos)
+float4 ComputeNormalMeanAndWeight(int2 LeftTop, int2 RightBottom)
 {
-    int2 SamplePos = clamp(PixelPos, int2(0, 0), Input_ViewportMax - 1);
-    float3 Color = InputTexture[SamplePos].rgb;
-    return float4(Color, Luminance2(Color));
-}
-
-float SampleSceneDepth(int2 PixelPos)
-{
-    int2 SamplePos = clamp(PixelPos, int2(0, 0), Input_ViewportMax - 1);
-    return SceneDepthTexture[SamplePos].x;
-}
-
-float4 ComputeMeanAndVariance(int2 LeftTop, int2 RightBottom)
-{
-    float4 ColorAndLum2 = (float4)0;
+    float4 Accum = (float4) 0;
+    float4 Accum2 = (float4) 0;
     
     for (int y = LeftTop.y; y <= RightBottom.y; ++y)
     {
         for (int x = LeftTop.x; x <= RightBottom.x; ++x)
         {
-            ColorAndLum2 += SampleInputColor(int2(x, y));
+            float4 Normal = SampleNormal(int2(x, y));
+            Accum += Normal;
+            Accum2 += Normal * Normal;
         }
-
     }
-
-    float Area = (RightBottom.x - LeftTop.x + 1) * (RightBottom.y - LeftTop.y + 1);
-    ColorAndLum2 /= Area;
     
-    return float4(ColorAndLum2.rgb, ColorAndLum2.a - Luminance2(ColorAndLum2.rgb));
+    if (Accum.w > 0)
+    {
+        float InvWeight = 1.0 / Accum.w;
+        float3 Variance = InvWeight * Accum2 - Pow2(InvWeight * Accum);
+        float Weight = 1.0 / (1.0 + 1000000.0 * (Variance.x + Variance.y + Variance.z));
+        return float4(normalize(Accum.xyz), Weight);
+    }
+    else
+    {
+        return float4(0, 0, 0, 1);
+    }
+}
+
+float4 ComputeMeanAndWeight(int2 LeftTop, int2 RightBottom)
+{
+#if TARGET_TYPE == TARGET_TYPE_COLOR
+    return ComputeColorMeanAndWeight(LeftTop, RightBottom);
+#elif TARGET_TYPE == TARGET_TYPE_NORMAL
+    return ComputeNormalMeanAndWeight(LeftTop, RightBottom);
+#endif
 }
 
 float3 ClassicKuwaharaFilter(int2 PixelPos)
 {
-    float4 ColorAndMinVariance = ComputeMeanAndVariance(PixelPos + int2(-FilterSize, -FilterSize), PixelPos);
+    int2 LeftTop = ClampToViewport(PixelPos - FilterSize);
+    int2 RightBottom = ClampToViewport(PixelPos + FilterSize);
     
-    float4 ColorAndVariance = ComputeMeanAndVariance(PixelPos + int2(0, -FilterSize), PixelPos + int2(FilterSize, 0));
-    if (ColorAndVariance.a < ColorAndMinVariance.a)
+    float4 MeanAndMaxWeight = ComputeMeanAndWeight(LeftTop, PixelPos);
+    
+    float4 MeanAndWeight = ComputeMeanAndWeight(int2(PixelPos.x, LeftTop.y), int2(RightBottom.x, PixelPos.y));
+    if (MeanAndWeight.w > MeanAndMaxWeight.w)
     {
-        ColorAndMinVariance = ColorAndVariance;
+        MeanAndMaxWeight = MeanAndWeight;
     }
     
-    ColorAndVariance = ComputeMeanAndVariance(PixelPos + int2(-FilterSize, 0), PixelPos + int2(0, FilterSize));
-    if (ColorAndVariance.a < ColorAndMinVariance.a)
+    MeanAndWeight = ComputeMeanAndWeight(int2(LeftTop.x, PixelPos.y), int2(PixelPos.x, RightBottom.y));
+    if (MeanAndWeight.w > MeanAndMaxWeight.w)
     {
-        ColorAndMinVariance = ColorAndVariance;
+        MeanAndMaxWeight = MeanAndWeight;
     }
     
-    ColorAndVariance = ComputeMeanAndVariance(PixelPos, PixelPos + int2(FilterSize, FilterSize));
-    if (ColorAndVariance.a < ColorAndMinVariance.a)
+    MeanAndWeight = ComputeMeanAndWeight(PixelPos, RightBottom);
+    if (MeanAndWeight.w > MeanAndMaxWeight.w)
     {
-        ColorAndMinVariance = ColorAndVariance;
+        MeanAndMaxWeight = MeanAndWeight;
     }
     
-    return ColorAndMinVariance.rgb;
+#if TARGET_TYPE == TARGET_TYPE_COLOR
+    return MeanAndMaxWeight.xyz;
+#elif TARGET_TYPE == TARGET_TYPE_NORMAL
+    return any(MeanAndMaxWeight.xyz) ? 0.5 * normalize(MeanAndMaxWeight.xyz) + 0.5 : float3(0, 0, 0);
+#endif
 }
 
-float3 SmoothKuwaharaFilter(int2 PixelPos)
+float3 GeneralizedKuwaharaFilter(int2 PixelPos)
 {
-    float4 ColorAndAlpha = (float4) 0;
-    float4 ColorAndVariance = (float4) 0;
-    float Alpha = 0;
+    int2 LeftTop = ClampToViewport(PixelPos - FilterSize);
+    int2 RightBottom = ClampToViewport(PixelPos + FilterSize);
     
-    ColorAndVariance = ComputeMeanAndVariance(PixelPos + int2(-FilterSize, -FilterSize), PixelPos);
-    Alpha = 1.0 / (1.0 + 1000000.0 * ColorAndVariance.a);
-    ColorAndAlpha += float4(Alpha * ColorAndVariance.rgb, Alpha);
+    float4 Accum = (float4) 0;
     
-    ColorAndVariance = ComputeMeanAndVariance(PixelPos + int2(0, -FilterSize), PixelPos + int2(FilterSize, 0));
-    Alpha = 1.0 / (1.0 + 1000000.0 * ColorAndVariance.a);
-    ColorAndAlpha += float4(Alpha * ColorAndVariance.rgb, Alpha);
+    float4 MeanAndWeight = ComputeMeanAndWeight(LeftTop, PixelPos);
+    Accum += float4(MeanAndWeight.w * MeanAndWeight.xyz, MeanAndWeight.w);
     
-    ColorAndVariance = ComputeMeanAndVariance(PixelPos + int2(-FilterSize, 0), PixelPos + int2(0, FilterSize));
-    Alpha = 1.0 / (1.0 + 1000000.0 * ColorAndVariance.a);
-    ColorAndAlpha += float4(Alpha * ColorAndVariance.rgb, Alpha);
+    MeanAndWeight = ComputeMeanAndWeight(int2(PixelPos.x, LeftTop.y), int2(RightBottom.x, PixelPos.y));
+    Accum += float4(MeanAndWeight.w * MeanAndWeight.xyz, MeanAndWeight.w);
     
-    ColorAndVariance = ComputeMeanAndVariance(PixelPos, PixelPos + int2(FilterSize, FilterSize));
-    Alpha = 1.0 / (1.0 + 1000000.0 * ColorAndVariance.a);
-    ColorAndAlpha += float4(Alpha * ColorAndVariance.rgb, Alpha);
+    MeanAndWeight = ComputeMeanAndWeight(int2(LeftTop.x, PixelPos.y), int2(PixelPos.x, RightBottom.y));
+    Accum += float4(MeanAndWeight.w * MeanAndWeight.xyz, MeanAndWeight.w);
     
-    return ColorAndAlpha.rgb / ColorAndAlpha.a;
+    MeanAndWeight = ComputeMeanAndWeight(PixelPos, RightBottom);
+    Accum += float4(MeanAndWeight.w * MeanAndWeight.xyz, MeanAndWeight.w);
+    
+#if TARGET_TYPE == TARGET_TYPE_COLOR
+    return Accum.xyz / Accum.w;
+#elif TARGET_TYPE == TARGET_TYPE_NORMAL
+    return any(Accum.xyz) ? 0.5 * normalize(Accum.xyz) + 0.5 : float3(0, 0, 0);
+#endif
+}
+
+float3 SampleOrientationByColor(int2 PixelPos)
+{
+    return OrientationTexture[ClampToViewport(PixelPos)].xyz;
+}
+
+float SampleOrientationByDepth(int2 PixelPos)
+{
+    return OrientationTexture[ClampToViewport(PixelPos)].x;
 }
 
 void ComputeOrientationAndAnisotropy(int2 PixelPos, out float CosPhi, out float SinPhi, out float A)
 {
-    float E, G, F;
-#if 1
-    float3 Fx = SampleSceneColor(PixelPos + int2(+1, 0)) - SampleSceneColor(PixelPos + int2(-1, 0));
-    float3 Fy = SampleSceneColor(PixelPos + int2(0, +1)) - SampleSceneColor(PixelPos + int2(0, -1));
+    float E = 0, G = 0, F = 0;
+#if ORIENTATION == ORIENTTATION_COLOR
+    float3 Fx = SampleOrientationByColor(PixelPos + int2(+1, 0)) - SampleOrientationByColor(PixelPos + int2(-1, 0));
+    float3 Fy = SampleOrientationByColor(PixelPos + int2(0, +1)) - SampleOrientationByColor(PixelPos + int2(0, -1));
     E = dot(Fx, Fx);
     G = dot(Fy, Fy);
     F = dot(Fx, Fy);
-#else
-    float Fx = SampleSceneDepth(PixelPos + int2(+1, 0)) - SampleSceneDepth(PixelPos + int2(-1, 0));
-    float Fy = SampleSceneDepth(PixelPos + int2(0, +1)) - SampleSceneDepth(PixelPos + int2(0, -1));
+#elif ORIENTATION == ORIENTTATION_DEPTH
+    float Fx = SampleOrientationByDepth(PixelPos + int2(+1, 0)) - SampleOrientationByDepth(PixelPos + int2(-1, 0));
+    float Fy = SampleOrientationByDepth(PixelPos + int2(0, +1)) - SampleOrientationByDepth(PixelPos + int2(0, -1));
     E = Fx * Fx;
     G = Fy * Fy;
     F = Fx * Fy;
@@ -152,40 +192,11 @@ void ComputeOrientationAndAnisotropy(int2 PixelPos, out float CosPhi, out float 
     float L1 = 0.5 * (E + G + D);
     float L2 = 0.5 * (E + G - D);
     float2 t = float2(L1 - E, -F);
-    t = dot(t, t) > 0.0 ? normalize(t) : float2(0.0, -1.0);
+    t = any(t) ? normalize(t) : float2(0.0, -1.0);
     
     CosPhi = t.x;
     SinPhi = -t.y;
-    A = (L1 + L2) > 0.0 ? (L1 - L2) / (L1 + L2) : 0.0;
-}
-
-void ComputeOrientationAndAnisotropyByNormal(int2 PixelPos, out float CosPhi, out float SinPhi, out float A)
-{
-    float3 Normal = WorldNormalTexture[PixelPos].xyz;
-    if (dot(Normal, Normal) == 0)
-    {
-        CosPhi = 0.0;
-        SinPhi = -1.0;
-        A = 0.0;
-        return;
-    }
-
-    Normal = 2.0 * Normal - 1;
-    Normal = mul(Normal, (float3x3)View.TranslatedWorldToClip);
-
-    if (dot(Normal.xy, Normal.xy) == 0.0)
-    {
-        CosPhi = 0.0;
-        SinPhi = -1.0;
-        A = 0.0;
-    }
-    else
-    {
-        Normal.xy = normalize(Normal.xy);
-        CosPhi = Normal.x;
-        SinPhi = -Normal.y;
-        A = abs(Normal.z);
-    }
+    A = (L1 + L2) > 0.0 ? (L1 - L2) / (L1 + L2) : 0.0;    
 }
 
 int GetSubregionIndex(float2 V)
@@ -200,24 +211,7 @@ int GetSubregionIndex(float2 V)
     }
 }
 
-float4 GetWeights(float2 V)
-{
-    if (dot(V, V) == 0)
-    {
-        return float4(1, 1, 1, 1);
-    }
-    else
-    {
-        V = normalize(V);
-        return saturate(float4(
-            dot(V, float2(+1, 0)),
-            dot(V, float2(0, +1)),
-            dot(V, float2(-1, 0)),
-            dot(V, float2(0, -1))));
-    }
-}
-
-float3 AnisotropicKuwaharaFilter(int2 PixelPos)
+float3 AnisotropyKuwaharaFilter(int2 PixelPos)
 {
     float CosPhi, SinPhi, A;
     ComputeOrientationAndAnisotropy(PixelPos, CosPhi, SinPhi, A);
@@ -226,11 +220,11 @@ float3 AnisotropicKuwaharaFilter(int2 PixelPos)
     float b = float(FilterSize) * 1.0 / (1.0 + A);
     float2x2 SR = mul(float2x2(1.0 / a, 0, 1.0 / b, 0), float2x2(CosPhi, -SinPhi, SinPhi, CosPhi));
     
-    float4 Colors[4] = { (float4) 0, (float4) 0, (float4) 0, (float4) 0 };
-    float Weights[4] = { 0, 0, 0, 0 };
+    float4 SubAccum[4] = { (float4) 0, (float4) 0, (float4) 0, (float4) 0 };
+    float4 SubAccum2[4] = { (float4) 0, (float4) 0, (float4) 0, (float4) 0 };
     
-    int MaxX = ceil(a * abs(CosPhi) + b * abs(SinPhi));
-    int MaxY = ceil(a * abs(SinPhi) + b * abs(CosPhi));
+    int MaxX = a * abs(CosPhi) + b * abs(SinPhi);
+    int MaxY = a * abs(SinPhi) + b * abs(CosPhi);
     for (int y = -MaxY; y <= MaxY; ++y)
     {
         for (int x = -MaxX; x <= MaxX; ++x)
@@ -239,141 +233,131 @@ float3 AnisotropicKuwaharaFilter(int2 PixelPos)
             if (dot(v, v) <= 1.0)
             {
                 int Index = GetSubregionIndex(int2(x, y));
-                Colors[Index] += SampleSceneColorAndLuminance2(PixelPos + int2(x, y));
-                Weights[Index] += 1.0;
+#if TARGET_TYPE == TARGET_TYPE_COLOR
+                float3 Color = SampleColor(ClampToViewport(PixelPos + int2(x, y)));
+                SubAccum[Index] += float4(Color, 1);
+                SubAccum2[Index] += float4(Color * Color, 1);
+#elif TARGET_TYPE == TARGET_TYPE_NORMAL
+                float4 Normal = SampleNormal(ClampToViewport(PixelPos + int2(x, y)));
+                SubAccum[Index] += Normal;
+                SubAccum2[Index] += Normal * Normal;
+#endif
             }
         }
     }
     
-    float4 OutColor = (float4) 0;
+    float4 Accum = (float4) 0;
     
     for (int i = 0; i < 4; ++i)
     {
-        if (Weights[i] != 0.0)
+        if (SubAccum[i].w != 0.0)
         {
-            Colors[i] /= Weights[i];
-            float Variance2 = Colors[i].a - Luminance2(Colors[i].rgb);
-            float Alpha = 1.0 / (1.0 + 1000000.0 * Variance2);
-            OutColor += float4(Alpha * Colors[i].rgb, Alpha);
+            SubAccum[i].xyz /= SubAccum[i].w;
+            SubAccum2[i].xyz /= SubAccum2[i].w;
+            float3 Variance = SubAccum2[i].xyz - Pow2(SubAccum[i].xyz);
+            float Alpha = 1.0 / (1.0 + 1000000.0 * (Variance.x + Variance.y + Variance.z));
+            Accum += float4(Alpha * SubAccum[i].xyz, Alpha);
         }
     }
-
-    OutColor.rgb /= OutColor.a;
-    return OutColor.rgb;
+    
+#if TARGET_TYPE == TARGET_TYPE_COLOR
+    return Accum.xyz / Accum.w;
+#elif TARGET_TYPE == TARGET_TYPE_NORMAL
+    return any(Accum.xyz) ? 0.5 * normalize(Accum.xyz) + 0.5 : float3(0, 0, 0);
+#endif
 }
 
+float3 SymmetricColorSample(int2 PixelPos, int2 Offset, float3 Center)
+{
+    float3 Value1 = SampleColor(ClampToViewport(PixelPos - Offset));
+    float3 Value2 = SampleColor(ClampToViewport(PixelPos + Offset));
+    float3 Delta1 = Value1 - Center;
+    float3 Delta2 = Value2 - Center;
+    float3 Value = dot(Delta1, Delta1) < dot(Delta2, Delta2) ? Value1 : Value2;
+    return Value;
+}
+
+float3 SymmetricNormalSample(int2 PixelPos, int2 Offset, float4 Center)
+{
+    float4 Value1 = SampleNormal(ClampToViewport(PixelPos - Offset));
+    float4 Value2 = SampleNormal(ClampToViewport(PixelPos + Offset));
+    if (Value1.w && Value2.w)
+    {
+        float Delta1 = dot(Center.xyz, Value1.xyz);
+        float Delta2 = dot(Center.xyz, Value2.xyz);
+        return Delta1 < Delta2 ? Value1.xyz : Value2.xyz;
+    }
+    else if (Value1.w)
+    {
+        return Value1.xyz;
+    }
+    else if (Value2.w)
+    {
+        return Value2.xyz;
+    }
+    else
+    {
+        return float3(0, 0, 0);
+    }
+}
+
+#if TARGET_TYPE == TARGET_TYPE_COLOR
 float3 SymmetricSample(int2 PixelPos, int2 Offset, float3 Center)
 {
-    float3 ColorA = SampleSceneColor(PixelPos - Offset);
-    float3 ColorB = SampleSceneColor(PixelPos + Offset);
-    float3 DeltaA = ColorA - Center;
-    float3 DeltaB = ColorB - Center;
-    return dot(DeltaA, DeltaA) < dot(DeltaB, DeltaB) ? ColorA : ColorB;
+    return SymmetricColorSample(PixelPos, Offset, Center);
 }
+#elif TARGET_TYPE == TARGET_TYPE_NORMAL
+float3 SymmetricSample(int2 PixelPos, int2 Offset, float4 Center)
+{
+    return SymmetricNormalSample(PixelPos, Offset, Center);
+}
+#endif
 
 float3 SymmetricNearestNeighborFilter(int2 PixelPos)
 {
-    float3 Center = SampleSceneColor(PixelPos);
-    float4 ColorAndWeight = float4(Center, 1);
+#if TARGET_TYPE == TARGET_TYPE_COLOR
+    float3 Center = SampleColor(PixelPos);
+#elif TARGET_TYPE == TARGET_TYPE_NORMAL
+    float4 Center = SampleNormal(PixelPos);
+    if(Center.a == 0.0)
+    {
+        return float3(0, 0, 0);
+    }
+#endif
+    
+    float4 Accum = float4(Center.xyz, 1.0);
     
     for (int y = -FilterSize; y < 0; ++y)
     {
         for (int x = -FilterSize; x <= FilterSize; ++x)
         {
-            ColorAndWeight += float4(SymmetricSample(PixelPos, int2(x, y), Center), 1.0);
+            Accum += float4(SymmetricSample(PixelPos, int2(x, y), Center), 1);
         }
     }
     
     for (int x = -FilterSize; x < 0; ++x)
     {
-        ColorAndWeight += float4(SymmetricSample(PixelPos, int2(x, 0), Center), 1.0);
+        Accum += float4(SymmetricSample(PixelPos, int2(x, 0), Center), 1);
     }
-	
-    return ColorAndWeight.rgb / ColorAndWeight.a;
+    
+#if TARGET_TYPE == TARGET_TYPE_COLOR
+    return Accum.xyz / Accum.w;
+#elif TARGET_TYPE == TARGET_TYPE_NORMAL
+    return any(Accum.xyw) ? 0.5 * normalize(Accum.xyz) + 0.5 : float3(0, 0, 0);
+#endif
 }
 
-void SceneColorSketchFilterPS(in float4 SvPosition: SV_Position, out float4 OutColor: SV_Target0)
+void SketchFilterPS(in float4 SvPosition : SV_Position, out float4 OutColor : SV_Target0)
 {
     int2 PixelPos = int2(SvPosition.xy);
-    OutColor = float4(AnisotropicKuwaharaFilter(PixelPos), 0.0);
-    // OutColor = float4(SymmetricNearestNeighborFilter(PixelPos), 0.0);
 
-}
-
-float4 SampleWorldNormal(int2 PixelPos)
-{
-    int2 SamplePos = clamp(PixelPos, 0, Input_ViewportMax - 1);
-    float3 Raw = InputTexture[SamplePos];
-    Raw = floor(8.0 * Raw) / 8.0;
-    return dot(Raw, Raw) > 0 ? float4(2.0 * Raw - 1.0, 1.0) : float4(0, 0, 0, 0);
-}
-
-float4 ComputeNormalMeanAndVariance(int2 LeftTop, int2 RightBottom)
-{
-    float3 Normal = (float3) 0;
-    float3 Normal2 = (float3) 0;
-    float Weight = 0.0;
-    
-    for (int y = LeftTop.y; y <= RightBottom.y; ++y)
-    {
-        for (int x = LeftTop.x; x <= RightBottom.x; ++x)
-        {
-            float4 N = SampleWorldNormal(int2(x, y));
-            N.xyz *= N.w;
-            Normal += N.xyz;
-            Normal2 += N.xyz * N.xyz;
-            Weight += N.w;
-        }
-
-    }
-    
-    if (dot(Normal, Normal)== 0)
-    {
-        return float4(0, 0, 0, 0);
-    }
-    else
-    {
-        float3 S = Normal2 / Weight - Pow2(Normal / Weight);
-        return float4(normalize(Normal), S.x + S.y + S.z);
-    }
-}
-
-float3 NormalKuwaharaFilter(int2 PixelPos)
-{
-    float4 NormalAndAlpha = (float4) 0;
-    float4 NormalAndVariance = (float4) 0;
-    float Alpha = 0;
-    
-    NormalAndVariance = ComputeNormalMeanAndVariance(PixelPos + int2(-FilterSize, -FilterSize), PixelPos);
-    Alpha = 1.0 / (1.0 + 10000.0 * NormalAndVariance.a);
-    NormalAndAlpha += float4(Alpha * NormalAndVariance.xyz, Alpha);
-    
-    NormalAndVariance = ComputeNormalMeanAndVariance(PixelPos + int2(0, -FilterSize), PixelPos + int2(FilterSize, 0));
-    Alpha = 1.0 / (1.0 + 10000.0 * NormalAndVariance.a);
-    NormalAndAlpha += float4(Alpha * NormalAndVariance.xyz, Alpha);
-    
-    NormalAndVariance = ComputeNormalMeanAndVariance(PixelPos + int2(-FilterSize, 0), PixelPos + int2(0, FilterSize));
-    Alpha = 1.0 / (1.0 + 10000.0 * NormalAndVariance.a);
-    NormalAndAlpha += float4(Alpha * NormalAndVariance.xyz, Alpha);
-    
-    NormalAndVariance = ComputeNormalMeanAndVariance(PixelPos, PixelPos + int2(FilterSize, FilterSize));
-    Alpha = 1.0 / (1.0 + 10000.0 * NormalAndVariance.a);
-    NormalAndAlpha += float4(Alpha * NormalAndVariance.xyz, Alpha);
-    
-    if (NormalAndAlpha.w == 0)
-    {
-        return float3(0, 0, 0);
-    }
-    else
-    {
-        return 0.5 * normalize(NormalAndAlpha.xyz) + 0.5 ;
-    }
-}
-
-void GBufferSketchFilterPS(in float4 SvPosition : SV_Position, out float4 OutColor : SV_Target0)
-{
-    int2 PixelPos = int2(SvPosition.xy);
-    OutColor = float4(NormalKuwaharaFilter(PixelPos).xyz, 0.0);
-    // OutColor = float4(AnisotropicKuwaharaFilter(PixelPos), 0.0);
-    // OutColor = float4(SymmetricNearestNeighborFilter(PixelPos), 0.0);
+#if FILTER_METHOD == FILTER_METHOD_CLASSIC_KUWAHARA
+    OutColor = float4(ClassicKuwaharaFilter(PixelPos), 0);
+#elif FILTER_METHOD == FILTER_METHOD_GENERALIZED_KUWAHARA
+    OutColor = float4(GeneralizedKuwaharaFilter(PixelPos), 0);
+#elif FILTER_METHOD == FILTER_METHOD_ANISOTROPIC_KUWAHARA
+    OutColor = float4(AnisotropyKuwaharaFilter(PixelPos), 0);
+#elif FILTER_METHOD == FILTER_METHOD_SYMMETRIC_NEAREST_NEIGHBOR
+    OutColor = float4(SymmetricNearestNeighborFilter(PixelPos), 0);
+#endif
 }
