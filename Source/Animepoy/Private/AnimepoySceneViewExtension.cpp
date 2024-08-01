@@ -35,11 +35,12 @@ void FAnimepoySceneViewExtension::PostRenderBasePassDeferred_RenderThread(FRDGBu
 
 	if (ShouldProcessThisView() && AnimepoyRenderProxy.bSketchFilter && (AnimepoyRenderProxy.bFilterBaseColor || AnimepoyRenderProxy.bFilterWorldNormal))
 	{
-		FSketchFilterInputs PassInputs;
+		FGBufferSketchFilterInputs PassInputs{
+			RenderTargets,
+		};
 		PassInputs.SceneTextures = SceneTextures;
-		PassInputs.bFilterSceneColor = AnimepoyRenderProxy.bFilterSceneColor;
-		PassInputs.bFilterBaseColor = AnimepoyRenderProxy.bFilterBaseColor;
-		PassInputs.bFilterWorldNormal = AnimepoyRenderProxy.bFilterWorldNormal;
+		PassInputs.bProcessBaseColor = AnimepoyRenderProxy.bFilterBaseColor;
+		PassInputs.bProcessWorldNormal = AnimepoyRenderProxy.bFilterWorldNormal;
 		PassInputs.FilterType = AnimepoyRenderProxy.SketchFilterType;
 		PassInputs.FilterSize = AnimepoyRenderProxy.SketchFilterSize;
 		PassInputs.FilterDirection = AnimepoyRenderProxy.SketchFilterDirection;
@@ -57,11 +58,8 @@ void FAnimepoySceneViewExtension::PostDeferredLighting_RenderThread(FRDGBuilder&
 
 	if(ShouldProcessThisView() && AnimepoyRenderProxy.bSketchFilter && AnimepoyRenderProxy.bFilterSceneColor)
 	{
-		FSketchFilterInputs PassInputs;
+		FPostProcessSketchFilterInputs PassInputs{};
 		PassInputs.SceneTextures = SceneTextures;
-		PassInputs.bFilterSceneColor = AnimepoyRenderProxy.bFilterSceneColor;
-		PassInputs.bFilterBaseColor = AnimepoyRenderProxy.bFilterBaseColor;
-		PassInputs.bFilterWorldNormal = AnimepoyRenderProxy.bFilterWorldNormal;
 		PassInputs.FilterType = AnimepoyRenderProxy.SketchFilterType;
 		PassInputs.FilterSize = AnimepoyRenderProxy.SketchFilterSize;
 		PassInputs.FilterDirection = AnimepoyRenderProxy.SketchFilterDirection;
@@ -95,11 +93,11 @@ void FAnimepoySceneViewExtension::PrePostProcessPass_RenderThread(FRDGBuilder& G
 
 	if (ShouldProcessThisView() && AnimepoyRenderProxy.bSketchFilter)
 	{
-		FSketchFilterInputs PassInputs;
-		PassInputs.SceneTextures = Inputs.SceneTextures;
-		PassInputs.FilterSize = AnimepoyRenderProxy.SketchFilterSize;
+		FPostProcessSketchFilterInputs PassInputs;
+		PassInputs.SceneTextures = SceneTextures;
 		PassInputs.FilterType = AnimepoyRenderProxy.SketchFilterType;
-		PassInputs.FilterTarget = AnimepoyRenderProxy.SketchFilterTarget;
+		PassInputs.FilterSize = AnimepoyRenderProxy.SketchFilterSize;
+		PassInputs.FilterDirection = AnimepoyRenderProxy.SketchFilterDirection;
 		PassInputs.bDebugFilter = AnimepoyRenderProxy.bDebugSketchFilter;
 
 		AddSketchFilterPass(GraphBuilder, View, PassInputs);

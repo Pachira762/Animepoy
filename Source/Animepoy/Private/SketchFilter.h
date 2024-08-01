@@ -4,18 +4,27 @@
 #include "ScreenPass.h"
 #include "Animepoy.h"
 
-struct FSketchFilterInputs
+struct FGBufferSketchFilterInputs
 {
+	const FRenderTargetBindingSlots& RenderTargets;
 	TRDGUniformBufferRef<FSceneTextureUniformParameters> SceneTextures;
-	bool bFilterSceneColor;
-	bool bFilterBaseColor;
-	bool bFilterWorldNormal;
+	bool bProcessBaseColor;
+	bool bProcessWorldNormal;
 	ESketchFilterType FilterType;
 	int32 FilterSize;
 	ESketchFilterDirection FilterDirection;
 	bool bDebugFilter;
 };
 
-void AddGBufferSketchFilterPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FSketchFilterInputs& Inputs);
+struct FPostProcessSketchFilterInputs
+{
+	TRDGUniformBufferRef<FSceneTextureUniformParameters> SceneTextures;
+	ESketchFilterType FilterType;
+	int32 FilterSize;
+	ESketchFilterDirection FilterDirection;
+	bool bDebugFilter;
+};
 
-void AddSceneColorSketchFilterPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FSketchFilterInputs& Inputs);
+void AddGBufferSketchFilterPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FGBufferSketchFilterInputs& Inputs);
+
+void AddSceneColorSketchFilterPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FPostProcessSketchFilterInputs& Inputs);
