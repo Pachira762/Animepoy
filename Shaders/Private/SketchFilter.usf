@@ -14,9 +14,8 @@
 #define FILTER_METHOD_GENERALIZED_KUWAHARA 1
 #define FILTER_METHOD_ANISOTROPIC_KUWAHARA 2
 #define FILTER_METHOD_SYMMETRIC_NEAREST_NEIGHBOR 3
-#define ORIENTTATION_NONE 0
-#define ORIENTTATION_COLOR 1
-#define ORIENTTATION_DEPTH 2
+#define ORIENTTATION_COLOR 0
+#define ORIENTTATION_DEPTH 1
 
 SCREEN_PASS_TEXTURE_VIEWPORT(Input)
 
@@ -27,7 +26,7 @@ Texture2D OrientationTexture;
 
 int2 ClampToViewport(int2 PixelPos)
 {
-    return clamp(PixelPos, Input_ViewportMin, Input_ViewportMax - 1);
+    return clamp(PixelPos, (int2) Input_ViewportMin, (int2) Input_ViewportMax - 1);
 }
 
 float3 SampleColor(int2 PixelPos)
@@ -41,32 +40,28 @@ float4 SampleNormal(int2 PixelPos)
     return any(Normal) ? float4(2.0 * Normal - 1.0, 1.0) : float4(0, 0, 0, 0);
 }
 
-float4 ComputeColorMeanAndWeight(int2 LeftTop, int2 RightBottom)
+float4 ComputeColorMeanAndVariance(int2 LeftTop, int2 RightBottom)
 {
-    float3 Accum = (float3) 0;
-    float3 Accum2 = (float3) 0;
+    float4 Accum = (float4) 0;
+    float4 Accum2 = (float4) 0;
 
     for (int y = LeftTop.y; y <= RightBottom.y; ++y)
     {
         for (int x = LeftTop.x; x <= RightBottom.x; ++x)
         {
             float3 Color = SampleColor(int2(x, y));
-            Accum += Color;
-            Accum2 += Color * Color;
+            Accum += float4(Color, 1);
+            Accum2 += float4(Color * Color, 1);
         }
     }
-
-    float InvWeight = 1.0 / ((RightBottom.x - LeftTop.x + 1) * (RightBottom.y - LeftTop.y + 1));
-    Accum *= InvWeight;
-    Accum2 *= InvWeight;
     
-    float3 Variance = Accum2 - Pow2(Accum);
-    float Weight = 1.0 / (1.0 + 1000000.0 * (Variance.x + Variance.y + Variance.z));
-    
-    return float4(Accum, Weight);
+    Accum.xyz /= Accum.w;
+    Accum2.xyz /= Accum2.w;
+    float3 Variance = Accum2.xyz - Pow2(Accum.xyz);
+    return float4(Accum.xyz, Variance.x + Variance.y + Variance.z);
 }
 
-float4 ComputeNormalMeanAndWeight(int2 LeftTop, int2 RightBottom)
+float4 ComputeNormalMeanAndVariance(int2 LeftTop, int2 RightBottom)
 {
     float4 Accum = (float4) 0;
     float4 Accum2 = (float4) 0;
@@ -83,23 +78,23 @@ float4 ComputeNormalMeanAndWeight(int2 LeftTop, int2 RightBottom)
     
     if (Accum.w > 0)
     {
-        float InvWeight = 1.0 / Accum.w;
-        float3 Variance = InvWeight * Accum2 - Pow2(InvWeight * Accum);
-        float Weight = 1.0 / (1.0 + 1000000.0 * (Variance.x + Variance.y + Variance.z));
-        return float4(normalize(Accum.xyz), Weight);
+        Accum.xyz /= Accum.w;
+        Accum2.xyz /= Accum2.w;
+        float3 Variance = Accum2.xyz - Pow2(Accum.xyz);
+        return float4(normalize(Accum.xyz), Variance.x + Variance.y + Variance.z);
     }
     else
     {
-        return float4(0, 0, 0, 1);
+        return float4(0, 0, 0, 0);
     }
 }
 
-float4 ComputeMeanAndWeight(int2 LeftTop, int2 RightBottom)
+float4 ComputeMeanAndVariance(int2 LeftTop, int2 RightBottom)
 {
 #if TARGET_TYPE == TARGET_TYPE_COLOR
-    return ComputeColorMeanAndWeight(LeftTop, RightBottom);
+    return ComputeColorMeanAndVariance(LeftTop, RightBottom);
 #elif TARGET_TYPE == TARGET_TYPE_NORMAL
-    return ComputeNormalMeanAndWeight(LeftTop, RightBottom);
+    return ComputeNormalMeanAndVariance(LeftTop, RightBottom);
 #endif
 }
 
@@ -108,30 +103,102 @@ float3 ClassicKuwaharaFilter(int2 PixelPos)
     int2 LeftTop = ClampToViewport(PixelPos - FilterSize);
     int2 RightBottom = ClampToViewport(PixelPos + FilterSize);
     
-    float4 MeanAndMaxWeight = ComputeMeanAndWeight(LeftTop, PixelPos);
+    float4 MeanAndMinVariance = ComputeMeanAndVariance(LeftTop, PixelPos);
     
-    float4 MeanAndWeight = ComputeMeanAndWeight(int2(PixelPos.x, LeftTop.y), int2(RightBottom.x, PixelPos.y));
-    if (MeanAndWeight.w > MeanAndMaxWeight.w)
+    float4 MeanAndVariance = ComputeMeanAndVariance(int2(PixelPos.x, LeftTop.y), int2(RightBottom.x, PixelPos.y));
+    if (MeanAndVariance.w < MeanAndMinVariance.w)
     {
-        MeanAndMaxWeight = MeanAndWeight;
+        MeanAndMinVariance = MeanAndVariance;
     }
     
-    MeanAndWeight = ComputeMeanAndWeight(int2(LeftTop.x, PixelPos.y), int2(PixelPos.x, RightBottom.y));
-    if (MeanAndWeight.w > MeanAndMaxWeight.w)
+    MeanAndVariance = ComputeMeanAndVariance(int2(LeftTop.x, PixelPos.y), int2(PixelPos.x, RightBottom.y));
+    if (MeanAndVariance.w < MeanAndMinVariance.w)
     {
-        MeanAndMaxWeight = MeanAndWeight;
+        MeanAndMinVariance = MeanAndVariance;
     }
     
-    MeanAndWeight = ComputeMeanAndWeight(PixelPos, RightBottom);
-    if (MeanAndWeight.w > MeanAndMaxWeight.w)
+    MeanAndVariance = ComputeMeanAndVariance(PixelPos, RightBottom);
+    if (MeanAndVariance.w < MeanAndMinVariance.w)
     {
-        MeanAndMaxWeight = MeanAndWeight;
+        MeanAndMinVariance = MeanAndVariance;
     }
     
 #if TARGET_TYPE == TARGET_TYPE_COLOR
-    return MeanAndMaxWeight.xyz;
+    return MeanAndMinVariance.xyz;
 #elif TARGET_TYPE == TARGET_TYPE_NORMAL
-    return any(MeanAndMaxWeight.xyz) ? 0.5 * normalize(MeanAndMaxWeight.xyz) + 0.5 : float3(0, 0, 0);
+    return any(MeanAndMinVariance.xyz) ? 0.5 * normalize(MeanAndMinVariance.xyz) + 0.5 : float3(0, 0, 0);
+#endif
+}
+
+float GaussianWeight(float2 V)
+{
+    return exp(-dot(V, V) / float(FilterSize * FilterSize));
+}
+
+float ComputeAlpha(float Variance)
+{
+    return 1.0 / (1.0 + 1000000.0 * Variance);
+}
+
+float4 ComputeColorMeanAndAlpha(int2 LeftTop, int2 RightBottom, int2 CenterPos)
+{
+    float4 Accum = (float4) 0;
+    float4 Accum2 = (float4) 0;
+
+    for (int y = LeftTop.y; y <= RightBottom.y; ++y)
+    {
+        for (int x = LeftTop.x; x <= RightBottom.x; ++x)
+        {
+            float W = GaussianWeight(int2(x, y) - CenterPos);
+            float3 Color = SampleColor(int2(x, y));
+            Accum += float4(W * Color, W);
+            Accum2 += float4(W * Color * Color, W);
+        }
+    }
+    
+    Accum.xyz /= Accum.w;
+    Accum2.xyz /= Accum2.w;
+    float3 Variance = Accum2.xyz - Pow2(Accum.xyz);
+    float Alpha = ComputeAlpha(Variance.x + Variance.y + Variance.z);
+    return float4(Alpha * Accum.xyz, Alpha);
+}
+
+float4 ComputeNormalMeanAndAlpha(int2 LeftTop, int2 RightBottom, int2 CenterPos)
+{
+    float4 Accum = (float4) 0;
+    float4 Accum2 = (float4) 0;
+    
+    for (int y = LeftTop.y; y <= RightBottom.y; ++y)
+    {
+        for (int x = LeftTop.x; x <= RightBottom.x; ++x)
+        {
+            float W = GaussianWeight(int2(x, y) - CenterPos);
+            float4 Normal = SampleNormal(int2(x, y));
+            Accum += W * Normal;
+            Accum2 += W * Normal * Normal;
+        }
+    }
+    
+    if (Accum.w > 0)
+    {
+        Accum.xyz /= Accum.w;
+        Accum2.xyz /= Accum2.w;
+        float3 Variance = Accum2.xyz - Pow2(Accum.xyz);
+        float Alpha = ComputeAlpha(Variance.x + Variance.y + Variance.z);
+        return float4(Alpha * normalize(Accum.xyz), Alpha);
+    }
+    else
+    {
+        return float4(0, 0, 0, 1);
+    }
+}
+
+float4 ComputeMeanAndAlpha(int2 LeftTop, int2 RightBottom, int2 CenterPos)
+{
+#if TARGET_TYPE == TARGET_TYPE_COLOR
+    return ComputeColorMeanAndAlpha(LeftTop, RightBottom, CenterPos);
+#elif TARGET_TYPE == TARGET_TYPE_NORMAL
+    return ComputeNormalMeanAndAlpha(LeftTop, RightBottom, CenterPos);
 #endif
 }
 
@@ -141,18 +208,10 @@ float3 GeneralizedKuwaharaFilter(int2 PixelPos)
     int2 RightBottom = ClampToViewport(PixelPos + FilterSize);
     
     float4 Accum = (float4) 0;
-    
-    float4 MeanAndWeight = ComputeMeanAndWeight(LeftTop, PixelPos);
-    Accum += float4(MeanAndWeight.w * MeanAndWeight.xyz, MeanAndWeight.w);
-    
-    MeanAndWeight = ComputeMeanAndWeight(int2(PixelPos.x, LeftTop.y), int2(RightBottom.x, PixelPos.y));
-    Accum += float4(MeanAndWeight.w * MeanAndWeight.xyz, MeanAndWeight.w);
-    
-    MeanAndWeight = ComputeMeanAndWeight(int2(LeftTop.x, PixelPos.y), int2(PixelPos.x, RightBottom.y));
-    Accum += float4(MeanAndWeight.w * MeanAndWeight.xyz, MeanAndWeight.w);
-    
-    MeanAndWeight = ComputeMeanAndWeight(PixelPos, RightBottom);
-    Accum += float4(MeanAndWeight.w * MeanAndWeight.xyz, MeanAndWeight.w);
+    Accum += ComputeMeanAndAlpha(LeftTop, PixelPos, PixelPos);
+    Accum += ComputeMeanAndAlpha(int2(PixelPos.x, LeftTop.y), int2(RightBottom.x, PixelPos.y), PixelPos);
+    Accum += ComputeMeanAndAlpha(int2(LeftTop.x, PixelPos.y), int2(PixelPos.x, RightBottom.y), PixelPos);
+    Accum += ComputeMeanAndAlpha(PixelPos, RightBottom, PixelPos);
     
 #if TARGET_TYPE == TARGET_TYPE_COLOR
     return Accum.xyz / Accum.w;

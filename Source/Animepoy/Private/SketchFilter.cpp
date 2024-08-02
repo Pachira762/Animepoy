@@ -37,7 +37,7 @@ namespace {
 
 void AddSketchFilterPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FSketchFilterInput& Inputs)
 {
-	if (Inputs.FilterMethod == ESketchFilterMethod::AnisotropicKuwahara && (Inputs.Orientation == ESketchFilterOrientation::None || !Inputs.OrientationTexture))
+	if (Inputs.FilterMethod == ESketchFilterMethod::AnisotropicKuwahara && !Inputs.OrientationTexture)
 	{
 		return;
 	}

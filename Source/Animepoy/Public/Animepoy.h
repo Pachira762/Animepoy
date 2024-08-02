@@ -19,7 +19,6 @@ enum class ESketchFilterMethod : uint8
 UENUM(BlueprintType)
 enum class ESketchFilterOrientation : uint8
 {
-	None,
 	Color,
 	Depth,
 	MAX UMETA(Hidden),
@@ -49,7 +48,7 @@ struct FSketchFilterSettings
 	int32 FilterSize = 1;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere)
-	ESketchFilterOrientation Orientation = ESketchFilterOrientation::None;
+	ESketchFilterOrientation Orientation = ESketchFilterOrientation::Color;
 };
 
 struct FAnimepoyRenderProxy

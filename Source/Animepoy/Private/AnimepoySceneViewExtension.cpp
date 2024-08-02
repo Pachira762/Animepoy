@@ -22,7 +22,6 @@ namespace
 	{
 		switch (Orientation)
 		{
-		case ESketchFilterOrientation::None: return nullptr;
 		case ESketchFilterOrientation::Color: return ColorTexture;
 		case ESketchFilterOrientation::Depth: return DepthTexture;
 		default: return nullptr;
