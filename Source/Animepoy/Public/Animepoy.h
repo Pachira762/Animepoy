@@ -25,12 +25,15 @@ enum class ESketchFilterOrientation : uint8
 };
 
 UENUM(BlueprintType)
-enum class EAnimeDiffusionBlendMode : uint8
+enum class EDiffusionFilterBlendMode : uint8
 {
 	Lighten,
 	Screen,
 	Overlay,
+	HardLight,
 	SoftLight,
+	Preview UMETA(Hidden),
+	MAX UMETA(Hidden),
 };
 
 USTRUCT(BlueprintType)
@@ -77,7 +80,7 @@ struct FAnimepoyRenderProxy
 	float DiffusionLuminanceMin;
 	float DiffusionLuminanceMax;
 	float DiffusionBlurPercentage;
-	EAnimeDiffusionBlendMode DiffusionBlendMode;
+	EDiffusionFilterBlendMode DiffusionBlendMode;
 	bool bPreviewDiffusionMask;
 };
 
@@ -152,7 +155,7 @@ public:
 	float DiffusionBlurPercentage = 8.f;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Diffusion Filter")
-	EAnimeDiffusionBlendMode DiffusionBlendMode = EAnimeDiffusionBlendMode::Overlay;
+	EDiffusionFilterBlendMode DiffusionBlendMode = EDiffusionFilterBlendMode::Overlay;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Diffusion Filter")
 	bool bPreviewDiffusionMask = false;

@@ -41,6 +41,8 @@ void AddSketchFilterPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const
 	{
 		return;
 	}
+	
+	RDG_EVENT_SCOPE(GraphBuilder, "SketchFilter");
 
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 	FScreenPassTextureViewport Viewport(View.ViewRect);

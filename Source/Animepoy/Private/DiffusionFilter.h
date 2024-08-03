@@ -7,18 +7,16 @@
 
 class FSceneTextureParameters;
 
-struct FPostProcessDiffusionInputs
+struct FDiffusionFilterInputs
 {
 	FScreenPassRenderTarget OverrideOutput;
 	FScreenPassTexture SceneColor;
-	FRDGTextureRef PreTonemapColor;
 	float Intensity;
 	float LuminanceMin;
 	float LuminanceMax;
-	bool bPreTonemapLuminance;
 	float BlurPercentage;
-	EAnimeDiffusionBlendMode BlendMode;
-	bool bDebugMask;
+	EDiffusionFilterBlendMode BlendMode;
+	bool bPreviewMask;
 };
 
-FScreenPassTexture AddPostProcessDiffusionPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, FPostProcessDiffusionInputs& Inputs);
+FScreenPassTexture AddDiffusionFilterPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, FDiffusionFilterInputs& Inputs);

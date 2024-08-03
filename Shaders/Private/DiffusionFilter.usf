@@ -1,61 +1,55 @@
 /*=============================================================================
-	PostProcessDiffusion.usf: PostProcess Diffusion Filter
+	DiffusionFilter.usf: Post Tonemapper Diffusion Filter
 =============================================================================*/
 
 #include "/Engine/Private/Common.ush"
 #include "/Engine/Private/ScreenPass.ush"
 #include "/Engine/Private/PostProcessCommon.ush"
 
+#define BLEND_MODE_LIGHTEN 0
+#define BLEND_MODE_SCREEN 1
+#define BLEND_MODE_OVERLAY 2
+#define BLEND_MODE_HARDLIGHT 3
+#define BLEND_MODE_SOFTLIGHT 4
+#define BLEND_MODE_PREVIEW 5
+
 SCREEN_PASS_TEXTURE_VIEWPORT(Input)
-SCREEN_PASS_TEXTURE_VIEWPORT(PreTonemap)
 SCREEN_PASS_TEXTURE_VIEWPORT(Output)
 
+float LuminanceMin;
+float InvLuminanceWidth;
+float BlendAmount;
+
 Texture2D<float4> SceneColorTexture;
-Texture2D<float4> PreTonemapColorTexture;
 Texture2D<float4> BlurredColorTexture;
+RWTexture2D<float4> OutMaskTexture;
 
 //
 // Generate Mask
 //
 
-float LuminanceMin;
-float InvLuminanceWidth;
-RWTexture2D<float4> OutMaskTexture;
-
-float3 SampleSceneColor(int2 PixelPos)
+int2 ClampToViewport(int2 PixelPos)
 {
-    int2 SrcPos = DOWNSAMPLE_FACTOR * PixelPos + Input_ViewportMin;
-    float3 Color = (float3) 0;
-
-    UNROLL
-    for(int y = 0; y < DOWNSAMPLE_FACTOR; ++y)
-    {
-        UNROLL
-        for(int x = 0; x < DOWNSAMPLE_FACTOR; ++x) 
-        {
-            Color += SceneColorTexture[SrcPos + int2(x, y)].rgb;
-        }
-    }
-
-    return Color / (DOWNSAMPLE_FACTOR * DOWNSAMPLE_FACTOR);
+    return clamp(PixelPos, (int2) Input_ViewportMin, (int2) Input_ViewportMax - 1);
 }
 
-float3 SamplePreTonemapColor(int2 PixelPos)
+float3 GatherSceneColor(int2 PixelPos)
 {
-    int2 SrcPos = PreTonemap_ViewportSize * (PixelPos * Output_ExtentInverse) + PreTonemap_ViewportMin;
+    int2 SrcPixelPos = (int2) Input_ViewportMin + DOWNSAMPLE_FACTOR * PixelPos;
+    int2 LeftTop = ClampToViewport(SrcPixelPos - DOWNSAMPLE_FACTOR / 2);
+    int2 RightBottom = ClampToViewport(SrcPixelPos + DOWNSAMPLE_FACTOR / 2);
+    
     float3 Color = (float3) 0;
-
-    UNROLL
-    for(int y = 0; y < DOWNSAMPLE_FACTOR; ++y)
+    
+    for(int y = LeftTop.y; y <= RightBottom.y; ++y)
     {
-        UNROLL
-        for(int x = 0; x < DOWNSAMPLE_FACTOR; ++x) 
+        for(int x = LeftTop.x; x <= RightBottom.x; ++x) 
         {
-            Color += PreTonemapColorTexture[SrcPos + int2(x, y)].rgb;
+            Color += SceneColorTexture[int2(x, y)].rgb;
         }
     }
-
-    return Color / (DOWNSAMPLE_FACTOR * DOWNSAMPLE_FACTOR);
+    
+    return Color / ((RightBottom.x - LeftTop.x + 1) * (RightBottom.y - LeftTop.y + 1));
 }
 
 [numthreads(8,8,1)]
@@ -65,16 +59,10 @@ void GenerateMaskCS(uint2 Id: SV_DispatchThreadID)
 
     if (all(PixelPos < Output_Extent))
     {
-        float3 SceneColor = SampleSceneColor(PixelPos);
+        float3 Color = GatherSceneColor(PixelPos);
+        float Alpha = saturate((Luminance(Color) - LuminanceMin) * InvLuminanceWidth);
 
-#if USE_PRE_TONEMAP_LUMINANCE
-    float3 PreTonemapColor = SamplePreTonemapColor(PixelPos);
-    float Alpha = saturate((Luminance(PreTonemapColor) - LuminanceMin) * InvLuminanceWidth);
-#else
-    float Alpha = saturate((Luminance(SceneColor) - LuminanceMin) * InvLuminanceWidth);
-#endif
-
-        OutMaskTexture[PixelPos] = float4(SceneColor, Alpha);
+        OutMaskTexture[PixelPos] = float4(Color, Alpha);
     }
 }
 
@@ -89,65 +77,59 @@ float3 BlendLighten(float3 Base, float3 Blend)
 
 float3 BlendScreen(float3 Base, float3 Blend)
 {
-    return float3(
-        1.0 - (1.0 - Base.r) * (1.0 - Blend.r),
-        1.0 - (1.0 - Base.g) * (1.0 - Blend.g),
-        1.0 - (1.0 - Base.b) * (1.0 - Blend.b)
-    );
+    return 1.0 - (1.0 - Base) * (1.0 - Blend);
 }
 
 float3 BlendOverlay(float3 Base, float3 Blend)
 {
+    float3 A = 2.0 * Base * Blend;
+    float3 B = 1.0 - 2.0 * (1.0 - Base) * (1.0 - Blend);
     return float3(
-        Base.r < 0.5 ? (2.0 * Base.r * Blend.r) : (1.0 - 2.0 * (1.0 - Base.r) * (1.0 - Blend.r)),
-        Base.g < 0.5 ? (2.0 * Base.g * Blend.g) : (1.0 - 2.0 * (1.0 - Base.g) * (1.0 - Blend.g)),
-        Base.b < 0.5 ? (2.0 * Base.b * Blend.b) : (1.0 - 2.0 * (1.0 - Base.b) * (1.0 - Blend.b))
-    );
+        Base.r < 0.5 ? A.r : B.r,
+        Base.g < 0.5 ? A.g : B.g,
+        Base.b < 0.5 ? A.b : B.b);
+}
+
+float3 BlendHardLight(float3 Base, float3 Blend)
+{
+    float3 A = 2.0 * Base * Blend;
+    float3 B = 1.0 - 2.0 * (1.0 - Base) * (1.0 - Blend);
+    return float3(
+        Blend.r < 0.5 ? A.r : B.r,
+        Blend.g < 0.5 ? A.g : B.g,
+        Blend.b < 0.5 ? A.b : B.b);
 }
 
 float3 BlendSoftLight(float3 Base, float3 Blend)
 {
-    return float3(
-        (1.0 - 2.0 * Blend.r) * Base.r * Base.r + 2.0 * Blend.r * Base.r,
-        (1.0 - 2.0 * Blend.g) * Base.g * Base.g + 2.0 * Blend.g * Base.g,
-        (1.0 - 2.0 * Blend.b) * Base.b * Base.b + 2.0 * Blend.b * Base.b
-    );
+    return (1.0 - 2.0 * Blend) * Base * Base + 2.0 * Blend * Base;
 }
 
-#define DIFFUSION_BLEND_MODE_LIGHTEN 0
-#define DIFFUSION_BLEND_MODE_SCREEN 1
-#define DIFFUSION_BLEND_MODE_OVERLAY 2
-#define DIFFUSION_BLEND_MODE_SOFTLIGHT 3
-#define DIFFUSION_BLEND_MODE_DEBUG 4
-
-float BlendAmount;
-
-void CompositePS(float4 SvPosition : SV_POSITION, out float4 OutColor : SV_Target0)
+void CompositePS(float4 SvPosition : SV_Position, out float4 OutColor : SV_Target0)
 {
+    const float2 BufferUV = SvPositionToBufferUV(SvPosition);
+    float3 SceneColor = Texture2DSampleLevel(SceneColorTexture, GlobalBilinearClampedSampler, BufferUV, 0).rgb;
+    
     const float2 ViewportUV = (SvPosition.xy - Output_ViewportMin) * Output_ViewportSizeInverse;
-
-    float4 SceneColor = SceneColorTexture[Input_ViewportSize * ViewportUV + Input_ViewportMin];
     float4 BlurredColor = Texture2DSampleLevel(BlurredColorTexture, GlobalBilinearClampedSampler, ViewportUV, 0);
-
-    float3 BlendedColor;
-       
-#if DIFFUSION_BLEND_MODE == DIFFUSION_BLEND_MODE_LIGHTEN
-    BlendedColor = BlendLighten(SceneColor.rgb, BlurredColor.rgb);
-
-#elif DIFFUSION_BLEND_MODE == DIFFUSION_BLEND_MODE_SCREEN
-    BlendedColor = BlendScreen(SceneColor.rgb, BlurredColor.rgb);
-
-#elif DIFFUSION_BLEND_MODE == DIFFUSION_BLEND_MODE_OVERLAY
-    BlendedColor = BlendOverlay(SceneColor.rgb, BlurredColor.rgb);
-
-#elif DIFFUSION_BLEND_MODE == DIFFUSION_BLEND_MODE_SOFTLIGHT
-    BlendedColor = BlendSoftLight(SceneColor.rgb, BlurredColor.rgb);
-
-#elif DIFFUSION_BLEND_MODE == DIFFUSION_BLEND_MODE_DEBUG
-    BlendedColor = BlurredColor.rgb * BlurredColor.a;
+    
+#if BLEND_MODE == BLEND_MODE_LIGHTEN
+    float3 BlendedColor = BlendLighten(SceneColor, BlurredColor.rgb);
+#elif BLEND_MODE == BLEND_MODE_SCREEN
+    float3 BlendedColor = BlendScreen(SceneColor, BlurredColor.rgb);
+#elif BLEND_MODE == BLEND_MODE_OVERLAY
+    float3 BlendedColor = BlendOverlay(SceneColor, BlurredColor.rgb);
+#elif BLEND_MODE == BLEND_MODE_HARDLIGHT
+    float3 BlendedColor = BlendSoftLight(SceneColor, BlurredColor.rgb);
+#elif BLEND_MODE == BLEND_MODE_HARDLIGHT
+    float3 BlendedColor = BlendHardsLight(SceneColor, BlurredColor.rgb);
+#elif BLEND_MODE == BLEND_MODE_SOFTLIGHT
+    float3 BlendedColor = BlendSoftLight(SceneColor, BlurredColor.rgb);
+#elif BLEND_MODE == BLEND_MODE_PREVIEW
+    float3 BlendedColor = BlurredColor.a * BlurredColor.rgb;
     BlurredColor.a = 1.f;
 #endif
 
     float Alpha = BlendAmount * BlurredColor.a;
-    OutColor = float4(lerp(SceneColor.rgb, BlendedColor.rgb, Alpha), 0);
+    OutColor = float4(lerp(SceneColor, BlendedColor, Alpha), 0);
 }

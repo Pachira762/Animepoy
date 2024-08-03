@@ -84,6 +84,8 @@ namespace
 
 void AddLineArtPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FLineArtPassInputs& Inputs)
 {
+	RDG_EVENT_SCOPE(GraphBuilder, "LineArt");
+
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 	FScreenPassTextureViewport Viewport = FScreenPassTextureViewport(View.ViewRect);
 
@@ -92,8 +94,6 @@ void AddLineArtPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FLin
 
 	FRDGTextureRef LineTexture{};
 	{
-		RDG_EVENT_SCOPE(GraphBuilder, "PostProcessLineDetection");
-
 		FRDGTextureDesc Desc = FRDGTextureDesc::Create2D(Viewport.Extent, PF_R32_UINT, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV);
 		LineTexture = GraphBuilder.CreateTexture(Desc, TEXT("LineTexture"));
 
@@ -123,8 +123,6 @@ void AddLineArtPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FLin
 
 	if (Inputs.bPreview)
 	{
-		RDG_EVENT_SCOPE(GraphBuilder, "PostProcessLineComposite Preview");
-
 		FClearSceneColorAndGBufferPS::FParameters* Parameters = GraphBuilder.AllocParameters<FClearSceneColorAndGBufferPS::FParameters>();
 		Parameters->RenderTargets[0] = FRenderTargetBinding(SceneColor.Texture, ERenderTargetLoadAction::ENoAction);
 
@@ -144,8 +142,6 @@ void AddLineArtPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FLin
 	}
 
 	{
-		RDG_EVENT_SCOPE(GraphBuilder, "PostProcessLineComposite");
-
 		FCompositeLinePS::FParameters* Parameters = GraphBuilder.AllocParameters<FCompositeLinePS::FParameters>();
 		Parameters->View = View.ViewUniformBuffer;
 		Parameters->Input = GetScreenPassTextureViewportParameters(Viewport);

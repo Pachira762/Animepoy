@@ -164,18 +164,17 @@ void FAnimepoySceneViewExtension::SubscribeToPostProcessingPass(EPostProcessingP
 			check(InView.bIsViewInfo);
 			auto& View = static_cast<const FViewInfo&>(InView);
 
-			FPostProcessDiffusionInputs PassInputs;
+			FDiffusionFilterInputs PassInputs;
 			PassInputs.OverrideOutput = Inputs.OverrideOutput;
 			PassInputs.SceneColor = FScreenPassTexture::CopyFromSlice(GraphBuilder, Inputs.GetInput(EPostProcessMaterialInput::SceneColor));
-			PassInputs.PreTonemapColor = (*Inputs.SceneTextures.SceneTextures.GetUniformBuffer())->SceneColorTexture;
 			PassInputs.Intensity = AnimepoyRenderProxy.DiffusionFilterIntensity;
 			PassInputs.LuminanceMin = AnimepoyRenderProxy.DiffusionLuminanceMin;
 			PassInputs.LuminanceMax = AnimepoyRenderProxy.DiffusionLuminanceMax;
 			PassInputs.BlurPercentage = AnimepoyRenderProxy.DiffusionBlurPercentage;
 			PassInputs.BlendMode = AnimepoyRenderProxy.DiffusionBlendMode;
-			PassInputs.bDebugMask = AnimepoyRenderProxy.bPreviewDiffusionMask;
+			PassInputs.bPreviewMask = AnimepoyRenderProxy.bPreviewDiffusionMask;
 
-			return AddPostProcessDiffusionPass(GraphBuilder, View, PassInputs);
+			return AddDiffusionFilterPass(GraphBuilder, View, PassInputs);
 			}));
 	}
 }
